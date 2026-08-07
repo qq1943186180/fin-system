@@ -87,12 +87,21 @@ class MailBoxConfig:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "MailBoxConfig":
+        password = str(d.get("password", ""))
+        safe_user = str(d.get("username", "")).replace("@", "_at_").replace(".", "_")
+        secret_name = f"mail_box.password.{safe_user}"
+        if password:
+            try:
+                from security import set_secret
+                set_secret(secret_name, password)
+            except Exception:
+                pass
         return cls(
             name=str(d.get("name", "")),
             imap_host=str(d.get("imap_host", "")),
             imap_port=int(d.get("imap_port", 993)),
             username=str(d.get("username", "")),
-            password=str(d.get("password", "")),
+            password="",
             use_ssl=bool(d.get("use_ssl", True)),
             enabled=bool(d.get("enabled", True)),
             last_uid=int(d.get("last_uid", 0)),
@@ -114,7 +123,7 @@ class MailBoxConfig:
             "imap_host": self.imap_host,
             "imap_port": self.imap_port,
             "username": self.username,
-            "password": self.password,
+            # password 不写入磁盘，仅通过 DPAPI secret 读取
             "use_ssl": self.use_ssl,
             "enabled": self.enabled,
             "last_uid": self.last_uid,

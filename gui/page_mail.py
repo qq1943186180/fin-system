@@ -377,12 +377,6 @@ class MailBoxEditDialog(tk.Toplevel):
             messagebox.showerror("错误", "IMAP 服务器和用户名必填。")
             return
         data["enabled"] = self._enabled_var.get()
-        pwd = data.get("password", "")
-        secret_name = f"mail_box.password.{data['username'].replace('@', '_at_').replace('.', '_')}"
-        if pwd:
-            from security import set_secret
-
-            set_secret(secret_name, pwd)
         try:
             self.result = MailBoxConfig.from_dict(data)
         except Exception as exc:

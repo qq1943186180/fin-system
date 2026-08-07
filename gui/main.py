@@ -189,7 +189,7 @@ def _table_columns(conn, table: str) -> set[str]:
 
 
 class FinanceApp:
-    NAV_ITEMS = ("工作台", "账务", "资金", "往来", "费用票据", "报表", "设置")
+    NAV_ITEMS = ("工作台", "账务", "资金", "往来", "费用票据", "邮件收票", "报表", "设置")
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -488,7 +488,7 @@ class FinanceApp:
             "资金": self._page_cash,
             "往来": self._page_partners,
             "费用票据": self._page_expense_invoice,
-            # "邮件收票": self._page_mail,  # TD-5: 邮件功能入口暂隐藏
+            "邮件收票": self._page_mail,
             "报表": self._page_reports,
             "设置": self._page_settings,
         }
