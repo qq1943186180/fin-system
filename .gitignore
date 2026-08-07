@@ -1,0 +1,21 @@
+# Per-user data and credentials
+config/feishu.json
+db/*.db
+db/*.db-*
+data/
+logs/
+backups/
+
+# Python and tests
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+
+# Build output
+build/
+dist/
+release/
+*.tmp
+

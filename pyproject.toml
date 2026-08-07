@@ -1,0 +1,24 @@
+[project]
+name = "finance-system-desktop"
+version = "1.0.0"
+description = "Reliable single-user Windows bookkeeping desktop application"
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[project.optional-dependencies]
+build = [
+  "pyinstaller==6.21.0",
+  "pyinstaller-hooks-contrib==2026.6",
+  "altgraph==0.17.5",
+  "packaging==25.0",
+  "pefile==2024.8.26",
+  "pywin32-ctypes==0.2.3",
+  "setuptools==79.0.1",
+]
+test = [
+  "pytest==8.4.2",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
