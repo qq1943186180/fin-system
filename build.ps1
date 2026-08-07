@@ -245,13 +245,16 @@ try {
     Write-Host "[3/6] Running the frozen runtime self-check..."
     $oldHome = $env:FINANCE_SYSTEM_HOME
     $env:FINANCE_SYSTEM_HOME = $SelfCheckHome
+    $stderrLog = Join-Path $TempRoot "self-check-stderr.txt"
     try {
         $process = Start-Process -FilePath $StagedExe `
             -ArgumentList @("--self-check", "--self-check-report", $SelfCheckReport) `
-            -Wait -PassThru -WindowStyle Hidden
+            -Wait -PassThru -WindowStyle Hidden -RedirectStandardError $stderrLog
     } finally {
         $env:FINANCE_SYSTEM_HOME = $oldHome
     }
+    Write-Host "DEBUG: exe=$StagedExe report=$SelfCheckReport stderr=$stderrLog exit=$($process.ExitCode)"
+    if (Test-Path $stderrLog) { Get-Content $stderrLog -Raw }
     if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $SelfCheckReport)) {
         throw "Frozen runtime self-check failed with exit code $($process.ExitCode)."
     }
