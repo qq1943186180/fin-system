@@ -10,6 +10,7 @@ from typing import Any
 
 from modules.integration import IntegrationResult, IntegrationStatus
 from modules.mail_service import MailBoxConfig, fetch_attachments
+from modules.mail_processor import process_attachment
 
 from logging_setup import get_logger
 
@@ -61,12 +62,30 @@ class MailSyncEngine:
             if not result.ok:
                 LOG.warning("[%s] 收件失败: %s", cfg.name, result.message)
                 continue
-            # 无论是否有附件，都持久化 last_uid（fetch_attachments 已更新 cfg.last_uid）
-            self._persist_last_uid(cfg)
             attachments = result.data or []
             if not attachments:
+                # 无附件，不推进 last_uid（避免跳过待处理邮件）
                 continue
-            LOG.info("[%s] 获取 %d 个附件", cfg.name, len(attachments))
+            LOG.info("[%s] 获取 %d 个附件，开始处理", cfg.name, len(attachments))
+            all_ok = True
+            for att in attachments:
+                try:
+                    proc_result = process_attachment(
+                        att.get("filename", ""),
+                        att.get("bytes", b""),
+                        att.get("subject", ""),
+                    )
+                    if not proc_result.ok:
+                        LOG.warning("[%s] 附件处理失败: %s — %s",
+                                    cfg.name, att.get("filename", ""), proc_result.message)
+                        all_ok = False
+                except Exception:
+                    LOG.exception("[%s] 附件处理异常: %s", cfg.name, att.get("filename", ""))
+                    all_ok = False
+            # 所有附件处理成功后才推进 last_uid，避免丢失未处理邮件
+            if all_ok:
+                cfg.last_uid = max((a.get("uid", 0) or 0) for a in attachments)
+                self._persist_last_uid(cfg)
 
     def _persist_last_uid(self, cfg: MailBoxConfig) -> None:
         try:

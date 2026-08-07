@@ -260,7 +260,7 @@ def send_mail(
             IntegrationStatus.CONFIG_ERROR,
             "未配置 SMTP。",
         )
-    secret_name = f"mail_box.password.{config.username}"
+    secret_name = f"mail_box.password.{config.username.replace('@', '_at_').replace('.', '_')}"
     password = _get_secret_password(secret_name, config.password)
     if not password:
         return IntegrationResult(

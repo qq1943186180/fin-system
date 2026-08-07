@@ -184,7 +184,7 @@ class MailPage(Frame):
 
     def _start_sync(self):
         if self._sync is None:
-            self._sync = MailSyncEngine(self._config_provider, self._update_box)
+            self._sync = MailSyncEngine(self._config_provider, poll_interval_minutes=30)
             try:
                 interval = 30
                 try:
@@ -383,7 +383,6 @@ class MailBoxEditDialog(tk.Toplevel):
             from security import set_secret
 
             set_secret(secret_name, pwd)
-            data["password"] = pwd  # 保留用于 _cfg 回退
         try:
             self.result = MailBoxConfig.from_dict(data)
         except Exception as exc:
