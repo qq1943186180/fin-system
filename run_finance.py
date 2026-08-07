@@ -59,10 +59,10 @@ def self_check(report_path: str | None = None) -> int:
             "modules.invoice_gui",
             "modules.feishu",
             "modules.integration",
-            "mail_service",
-            "mail_sync",
-            "mail_processor",
-            "page_mail",
+            "modules.mail_service",
+            "modules.mail_sync",
+            "modules.mail_processor",
+            "gui.page_mail",
         )
         loaded = {name: importlib.import_module(name) for name in required_modules}
 
