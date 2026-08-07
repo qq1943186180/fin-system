@@ -290,9 +290,15 @@ class NavButton(tk.Frame):
                                fg=C_NAV_TEXT, anchor="w", padx=4)
         self._label.pack(side="left", fill="both", expand=True)
 
-        self.bind("<Enter>", self._on_enter)
-        self.bind("<Leave>", self._on_leave)
-        self.bind("<Button-1>", self._on_click)
+        # Tkinter does not bubble <Button-1> from child widgets to the
+        # parent Frame, so we must bind the handler on every interactive
+        # descendant to make the whole button clickable.
+        click_bindings = (self, self._indicator, self._label)
+        for widget in click_bindings:
+            widget.bind("<Enter>", self._on_enter)
+            widget.bind("<Leave>", self._on_leave)
+            widget.bind("<Button-1>", self._on_click)
+            widget.configure(cursor="hand2")
 
     def _on_enter(self, e):
         if not self._active:
