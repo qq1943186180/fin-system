@@ -189,7 +189,7 @@ def _table_columns(conn, table: str) -> set[str]:
 
 
 class FinanceApp:
-    NAV_ITEMS = ("工作台", "账务", "资金", "往来", "费用票据", "邮件收票", "报表", "设置")
+    NAV_ITEMS = ("工作台", "账务", "资金", "往来", "费用票据", "报表", "设置")
 
     def __init__(self, root: tk.Tk):
         self.root = root
