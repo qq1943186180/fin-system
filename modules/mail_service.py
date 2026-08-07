@@ -27,6 +27,89 @@ LOG = get_logger("modules.mail")
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024  # 10 MB
 
+MAIL_PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
+    "QQ邮箱": {
+        "imap_host": "imap.qq.com",
+        "imap_port": 993,
+        "smtp_host": "smtp.qq.com",
+        "smtp_port": 465,
+        "use_ssl": True,
+        "smtp_use_ssl": True,
+        "subject_filter": "发票|电子发票|invoice",
+    },
+    "163邮箱": {
+        "imap_host": "imap.163.com",
+        "imap_port": 993,
+        "smtp_host": "smtp.163.com",
+        "smtp_port": 465,
+        "use_ssl": True,
+        "smtp_use_ssl": True,
+        "subject_filter": "发票|电子发票|invoice",
+    },
+    "126邮箱": {
+        "imap_host": "imap.126.com",
+        "imap_port": 993,
+        "smtp_host": "smtp.126.com",
+        "smtp_port": 465,
+        "use_ssl": True,
+        "smtp_use_ssl": True,
+        "subject_filter": "发票|电子发票|invoice",
+    },
+    "Gmail": {
+        "imap_host": "imap.gmail.com",
+        "imap_port": 993,
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 465,
+        "use_ssl": True,
+        "smtp_use_ssl": True,
+        "subject_filter": "invoice|receipt",
+    },
+    "Outlook": {
+        "imap_host": "outlook.office365.com",
+        "imap_port": 993,
+        "smtp_host": "smtp.office365.com",
+        "smtp_port": 587,
+        "use_ssl": True,
+        "smtp_use_ssl": False,
+        "subject_filter": "invoice|receipt",
+    },
+    "自定义": {
+        "imap_host": "",
+        "imap_port": 993,
+        "smtp_host": "",
+        "smtp_port": 465,
+        "use_ssl": True,
+        "smtp_use_ssl": True,
+        "subject_filter": "发票|电子发票|invoice",
+    },
+}
+
+
+def detect_provider(username: str) -> str:
+    """根据邮箱域名推测服务商，返回预设键名。"""
+    domain = (username or "").split("@")[-1].lower()
+    mapping = {
+        "qq.com": "QQ邮箱",
+        "163.com": "163邮箱",
+        "126.com": "126邮箱",
+        "gmail.com": "Gmail",
+        "outlook.com": "Outlook",
+        "hotmail.com": "Outlook",
+        "live.com": "Outlook",
+    }
+    return mapping.get(domain, "自定义")
+
+
+def apply_preset_to_dict(data: dict[str, Any], provider_key: str) -> dict[str, Any]:
+    """用预设覆盖/补充字典中的服务器/端口/过滤字段。"""
+    preset = MAIL_PROVIDER_PRESETS.get(provider_key, MAIL_PROVIDER_PRESETS["自定义"])
+    result = dict(data)
+    for key in ("imap_host", "imap_port", "smtp_host", "smtp_port",
+                "use_ssl", "smtp_use_ssl", "subject_filter"):
+        if key in preset and (result.get(key) in (None, "", 0)):
+            result[key] = preset[key]
+    return result
+
 
 def _encrypted_password(name: str, plain: str) -> None:
     """将明文密码迁移到 DPAPI 存储。"""
