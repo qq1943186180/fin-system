@@ -37,8 +37,8 @@ from gui.ui_theme import (
     ModernButton,
     NavButton,
     StatCard,
+    C_PANEL,
 )
-from modules import arap, expense as expense_mod, feishu, invoice_gui, ledger, reports
 
 try:
     import app_paths
@@ -194,6 +194,7 @@ class FinanceApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         db.init_db()
+        self._run_startup_backup()
         self.default_actor = os.environ.get("USERNAME") or os.environ.get("USER") or "本机用户"
         self._dirty = False
         self._dirty_label = "当前表单"
@@ -297,6 +298,47 @@ class FinanceApp:
         self.content.grid(row=2, column=0, sticky="nsew")
         self._refresh_issue_state()
         self._show_page("工作台", force=True)
+
+    # ------------------------------------------------------------------
+    # TD-4: 启动时自动备份
+    # ------------------------------------------------------------------
+    def _run_startup_backup(self) -> None:
+        """Check if today's backup exists; if not, create one and keep N most recent."""
+        try:
+            from db import backup_database, get_conn as _db_get_conn
+            from datetime import date
+
+            # Determine the backup directory from app_paths or fallback to DB parent.
+            try:
+                import app_paths as _ap
+                backup_dir = _ap.BACKUP_DIR
+            except Exception:
+                backup_dir = Path(db.DB_PATH).resolve().parent.parent / "backups"
+
+            backup_dir.mkdir(parents=True, exist_ok=True)
+
+            today_str = date.today().isoformat()  # YYYY-MM-DD
+            existing_today = any(
+                f.name.startswith(f"finance-{today_str}")
+                for f in backup_dir.iterdir()
+                if f.is_file() and f.suffix == ".db"
+            )
+
+            if not existing_today:
+                backup_database()
+
+            # Keep the most recent N backups, delete older ones.
+            MAX_BACKUPS = 5
+            backups = sorted(
+                [f for f in backup_dir.iterdir() if f.is_file() and f.suffix == ".db"],
+                key=lambda f: f.stat().st_mtime,
+                reverse=True,
+            )
+            for old_backup in backups[MAX_BACKUPS:]:
+                old_backup.unlink(missing_ok=True)
+        except Exception:
+            # Never let a backup failure prevent the app from starting.
+            pass
 
     def _configure_style(self) -> None:
         configure_dark_style(self.root)
@@ -446,7 +488,7 @@ class FinanceApp:
             "资金": self._page_cash,
             "往来": self._page_partners,
             "费用票据": self._page_expense_invoice,
-            "邮件收票": self._page_mail,
+            # "邮件收票": self._page_mail,  # TD-5: 邮件功能入口暂隐藏
             "报表": self._page_reports,
             "设置": self._page_settings,
         }

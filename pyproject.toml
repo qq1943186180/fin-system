@@ -3,7 +3,7 @@ name = "finance-system-desktop"
 version = "1.0.0"
 description = "Reliable single-user Windows bookkeeping desktop application"
 requires-python = ">=3.11,<3.12"
-dependencies = []
+dependencies = ["imap_tools"]
 
 [project.optional-dependencies]
 build = [

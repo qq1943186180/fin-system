@@ -5,6 +5,8 @@ db/*.db-*
 data/
 logs/
 backups/
+work/*.db
+work/*
 
 # Python and tests
 __pycache__/

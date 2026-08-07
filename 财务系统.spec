@@ -1,9 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Canonical entry: project_root / "run_finance.py" (wrapper that sets sys.path)
-# GUI entry for PyInstaller: gui/main.py
 
 a = Analysis(
-    ['gui/main.py'],
+    ['run_finance.py'],
     pathex=[],
     binaries=[],
     datas=[('db', 'db'), ('modules', 'modules')],
