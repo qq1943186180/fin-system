@@ -203,7 +203,11 @@ try {
         "setuptools==79.0.1"
     if ($LASTEXITCODE -ne 0) { throw "Installing pinned build dependencies failed." }
 
-    Write-Host "[2/6] Building the relative onedir bundle..."
+    Write-Host "[2/6] Installing project runtime dependencies..."
+    & $BuildPython -m pip install --disable-pip-version-check --no-input "imap_tools" "pystray"
+    if ($LASTEXITCODE -ne 0) { throw "Installing project runtime dependencies failed." }
+
+    Write-Host "[3/6] Building the relative onedir bundle..."
     $oldHashSeed = $env:PYTHONHASHSEED
     $oldEpoch = $env:SOURCE_DATE_EPOCH
     $oldProjectRoot = $env:FINANCE_SYSTEM_PROJECT_ROOT
@@ -242,37 +246,44 @@ try {
         throw "Expected executable was not produced: $StagedExe"
     }
 
-    Write-Host "[3/6] Running the frozen runtime self-check..."
+    Write-Host "[4/6] Running the frozen runtime self-check..."
     $oldHome = $env:FINANCE_SYSTEM_HOME
     $env:FINANCE_SYSTEM_HOME = $SelfCheckHome
     $stderrLog = Join-Path $TempRoot "self-check-stderr.txt"
     try {
-        $process = Start-Process -FilePath $StagedExe `
-            -ArgumentList @("--self-check", "--self-check-report", $SelfCheckReport) `
-            -Wait -PassThru -WindowStyle Hidden -RedirectStandardError $stderrLog
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $StagedExe
+        $psi.Arguments = "--self-check --self-check-report `"$SelfCheckReport`""
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardError = $true
+        $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+        $psi.CreateNoWindow = $true
+        $process = [System.Diagnostics.Process]::Start($psi)
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
     } finally {
         $env:FINANCE_SYSTEM_HOME = $oldHome
     }
-    Write-Host "DEBUG: exe=$StagedExe report=$SelfCheckReport stderr=$stderrLog exit=$($process.ExitCode)"
+    Write-Host "DEBUG: exe=$StagedExe report=$SelfCheckReport stderr=$stderrLog exit=$exitCode"
     if (Test-Path $stderrLog) { Get-Content $stderrLog -Raw }
-    if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $SelfCheckReport)) {
-        throw "Frozen runtime self-check failed with exit code $($process.ExitCode)."
+    if ($exitCode -ne 0 -or -not (Test-Path -LiteralPath $SelfCheckReport)) {
+        throw "Frozen runtime self-check failed with exit code $exitCode."
     }
     $check = Get-Content -Raw -LiteralPath $SelfCheckReport -Encoding UTF8 | ConvertFrom-Json
     if (-not $check.ok) { throw "Frozen runtime self-check reported failure." }
 
-    Write-Host "[4/6] Scanning release for mutable data and live secrets..."
+    Write-Host "[5/6] Scanning release for mutable data and live secrets..."
     Assert-ReleaseIsClean -Directory $StagedRelease
 
-    Write-Host "[5/6] Writing SHA-256 manifest and publishing atomically..."
+    Write-Host "[6/6] Writing SHA-256 manifest and publishing atomically..."
     Write-HashManifest -Directory $StagedRelease
     Publish-ReleaseAtomically -SourceDirectory $StagedRelease
 
     if ($UpdateDesktopShortcut) {
-        Write-Host "[6/6] Updating the Desktop shortcut atomically..."
+        Write-Host "[7/7] Updating the Desktop shortcut atomically..."
         Update-ShortcutAtomically -Executable (Join-Path $ReleaseDir "$ReleaseName.exe")
     } else {
-        Write-Host "[6/6] Desktop shortcut unchanged (pass -UpdateDesktopShortcut after validation)."
+        Write-Host "[7/7] Desktop shortcut unchanged (pass -UpdateDesktopShortcut after validation)."
     }
 
     Write-Host "Release ready: $ReleaseDir"
