@@ -214,6 +214,15 @@ try {
     # from argv.  Use a temporary ASCII filename while keeping the tracked
     # specification path-independent.
     Copy-Item -LiteralPath (Join-Path $ProjectRoot "$ReleaseName.spec") -Destination $BuildSpec
+    (Get-Content $BuildSpec) -replace 'pathex=\[\]', "pathex=[r'$ProjectRoot']" | Set-Content $BuildSpec
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot "run_finance.py") -Destination (Join-Path $TempRoot "run_finance.py")
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot "app_paths.py") -Destination (Join-Path $TempRoot "app_paths.py")
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot "logging_setup.py") -Destination (Join-Path $TempRoot "logging_setup.py")
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot "security.py") -Destination (Join-Path $TempRoot "security.py")
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot "db") -Destination (Join-Path $TempRoot "db") -Recurse
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot "modules") -Destination (Join-Path $TempRoot "modules") -Recurse
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot "gui") -Destination (Join-Path $TempRoot "gui") -Recurse
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot "icon.ico") -Destination (Join-Path $TempRoot "icon.ico")
     Push-Location $ProjectRoot
     try {
         & $BuildPython -m PyInstaller --noconfirm --clean `
