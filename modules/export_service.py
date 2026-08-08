@@ -1,15 +1,28 @@
 # -*- coding: utf-8 -*-
-"""报表导出服务：Excel / PDF。"""
+"""报表导出服务：Excel / PDF。
+
+注：GUI 报表页使用 gui.main 内的 ``_export_report_*`` 函数（基于已生成的
+报表包）。本模块提供更细粒度的独立导出（科目余额表 / 凭证明细 / 发票明细），
+同样基于真实 schema（整数分 ``debit_cents`` / ``credit_cents``、凭证号 ``vno``、
+发票 ``seller`` / ``total_cents`` 等）。
+"""
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import date as _date
 from pathlib import Path
 from typing import Any
 
 from modules.integration import IntegrationResult, IntegrationStatus
 
-LOG = logging_setup.get_logger("export_service")
+try:
+    import logging_setup  # type: ignore
+
+    LOG = logging_setup.get_logger("export_service")
+except Exception:  # pragma: no cover - fallback when not bundled
+    import logging as _logging
+
+    LOG = _logging.getLogger("export_service")
 
 
 def _check_deps() -> IntegrationResult:
@@ -35,8 +48,12 @@ def _get_conn() -> sqlite3.Connection | None:
 
 # ---------- 科目余额表 ----------
 
-def export_balance_sheet(path: str | Path, fmt: str = "xlsx") -> IntegrationResult:
-    """导出科目余额表。"""
+def _current_period() -> str:
+    return _date.today().strftime("%Y-%m")
+
+
+def export_balance_sheet(path: str | Path, fmt: str = "xlsx", period: str | None = None) -> IntegrationResult:
+    """导出科目余额表（期末余额，单位：元）。"""
     dep = _check_deps()
     if not dep.ok:
         return dep
@@ -47,15 +64,21 @@ def export_balance_sheet(path: str | Path, fmt: str = "xlsx") -> IntegrationResu
         return IntegrationResult(IntegrationStatus.RETRYABLE_ERROR, "数据库连接失败")
 
     try:
+        end_period = period or _current_period()
         rows = conn.execute(
             """
             SELECT a.code, a.name, a.category,
-                   COALESCE(SUM(CASE WHEN j.direction='借' THEN j.amount ELSE -j.amount END), 0) AS balance
+                   COALESCE(SUM(CASE WHEN v.status IN ('posted','已记账') AND v.period<=?
+                                     THEN vl.debit_cents ELSE 0 END),0) d,
+                   COALESCE(SUM(CASE WHEN v.status IN ('posted','已记账') AND v.period<=?
+                                     THEN vl.credit_cents ELSE 0 END),0) c
             FROM account a
-            LEFT JOIN journal j ON j.account_id = a.id
-            GROUP BY a.id
+            LEFT JOIN voucher_line vl ON vl.account_code = a.code
+            LEFT JOIN voucher v ON v.id = vl.voucher_id
+            GROUP BY a.code, a.name, a.category
             ORDER BY a.code
-            """
+            """,
+            (end_period, end_period),
         ).fetchall()
     except Exception as exc:
         LOG.error("查询科目余额失败: %s", exc)
@@ -64,8 +87,13 @@ def export_balance_sheet(path: str | Path, fmt: str = "xlsx") -> IntegrationResu
     finally:
         conn.close()
 
-    headers = ["科目编码", "科目名称", "类别", "余额"]
-    data = [(r["code"], r["name"], r["category"], f"{r['balance']:.2f}") for r in rows]
+    headers = ["科目编码", "科目名称", "类别", "期末余额(元)"]
+    data = []
+    for r in rows:
+        net = int(r["d"] or 0) - int(r["c"] or 0)
+        if net == 0 and r["category"] not in ("资产", "负债", "权益", "成本"):
+            continue
+        data.append((r["code"], r["name"], r["category"], f"{net / 100:.2f}"))
 
     if fmt == "xlsx":
         return _write_xlsx(path, "科目余额表", headers, data)
@@ -89,16 +117,18 @@ def export_vouchers(path: str | Path, fmt: str = "xlsx", period: str | None = No
 
     try:
         sql = """
-            SELECT v.voucher_no, v.period, v.date, v.summary, v.status,
-                   GROUP_CONCAT(l.account_code || '|' || l.summary || '|' || l.debit || '|' || l.credit) AS lines
+            SELECT v.id, v.vno, v.period, v.date, v.summary, v.status,
+                   GROUP_CONCAT(vl.account_code || ' ' || COALESCE(a.name,'') || ' 借' ||
+                                 (vl.debit_cents/100.0) || ' 贷' || (vl.credit_cents/100.0), ' | ') AS lines
             FROM voucher v
-            LEFT JOIN voucher_line l ON l.voucher_id = v.id
+            LEFT JOIN voucher_line vl ON vl.voucher_id = v.id
+            LEFT JOIN account a ON a.code = vl.account_code
         """
         args: list[Any] = []
         if period:
             sql += " WHERE v.period = ?"
             args.append(period)
-        sql += " GROUP BY v.id ORDER BY v.date DESC, v.voucher_no DESC"
+        sql += " GROUP BY v.id ORDER BY v.date DESC, v.vno DESC"
         rows = conn.execute(sql, args).fetchall()
     except Exception as exc:
         LOG.error("查询凭证失败: %s", exc)
@@ -108,13 +138,10 @@ def export_vouchers(path: str | Path, fmt: str = "xlsx", period: str | None = No
         conn.close()
 
     headers = ["凭证号", "期间", "日期", "摘要", "状态", "分录明细"]
-    data = []
-    for r in rows:
-        lines = r["lines"] or ""
-        line_str = "; ".join(
-            f"{p[0]} {p[1]} 借{p[2]} 贷{p[3]}" for p in (l.split("|") for l in lines.split(";")) if len(p) == 4
-        )
-        data.append((r["voucher_no"], r["period"], r["date"], r["summary"], r["status"], line_str))
+    data = [
+        (r["vno"], r["period"], r["date"], r["summary"], r["status"], r["lines"] or "")
+        for r in rows
+    ]
 
     if fmt == "xlsx":
         return _write_xlsx(path, "凭证明细", headers, data)
@@ -137,7 +164,10 @@ def export_invoices(path: str | Path, fmt: str = "xlsx", status: str | None = No
         return IntegrationResult(IntegrationStatus.RETRYABLE_ERROR, "数据库连接失败")
 
     try:
-        sql = "SELECT invoice_no, date, seller_name, buyer_name, total, tax, total_cents, status, created_at FROM invoice_doc"
+        sql = (
+            "SELECT invoice_no, date, seller, buyer, "
+            "total_cents, tax_cents, status, created_at FROM invoice_doc"
+        )
         args: list[Any] = []
         if status:
             sql += " WHERE status = ?"
@@ -151,9 +181,18 @@ def export_invoices(path: str | Path, fmt: str = "xlsx", status: str | None = No
     finally:
         conn.close()
 
-    headers = ["发票号码", "开票日期", "销售方", "购买方", "价税合计", "税额", "状态", "入库时间"]
+    headers = ["发票号码", "开票日期", "销售方", "购买方", "价税合计(元)", "税额(元)", "状态", "入库时间"]
     data = [
-        (r["invoice_no"], r["date"], r["seller_name"], r["buyer_name"], f"{r['total']:.2f}", f"{r['tax']:.2f}", r["status"], r["created_at"])
+        (
+            r["invoice_no"],
+            r["date"],
+            r["seller"],
+            r["buyer"],
+            f"{(int(r['total_cents'] or 0)) / 100:.2f}",
+            f"{(int(r['tax_cents'] or 0)) / 100:.2f}",
+            r["status"],
+            r["created_at"],
+        )
         for r in rows
     ]
 

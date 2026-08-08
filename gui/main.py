@@ -189,7 +189,7 @@ def _table_columns(conn, table: str) -> set[str]:
 
 
 class FinanceApp:
-    NAV_ITEMS = ("工作台", "账务", "资金", "往来", "费用票据", "邮件收票", "报表", "设置")
+    NAV_ITEMS = ("工作台", "账务", "资金", "往来", "费用票据", "邮件收票", "进销存", "报表", "期末处理", "设置")
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -489,7 +489,9 @@ class FinanceApp:
             "往来": self._page_partners,
             "费用票据": self._page_expense_invoice,
             "邮件收票": self._page_mail,
+            "进销存": self._page_inventory,
             "报表": self._page_reports,
+            "期末处理": self._page_closing,
             "设置": self._page_settings,
         }
         try:
@@ -1465,6 +1467,20 @@ class FinanceApp:
         page = MailPage(parent, self)
         page.pack(fill="both", expand=True)
 
+    # ------------------------------ 进销存 ------------------------------
+    def _page_inventory(self, parent) -> None:
+        from gui.page_inventory import InventoryPage
+
+        page = InventoryPage(parent, self)
+        page.pack(fill="both", expand=True)
+
+    # ------------------------------ 期末处理 ------------------------------
+    def _page_closing(self, parent) -> None:
+        from gui.page_closing import ClosingPage
+
+        page = ClosingPage(parent, self)
+        page.pack(fill="both", expand=True)
+
     # ------------------------------ 报表 ------------------------------
     def _page_reports(self, parent) -> None:
         self.header_status.configure(text="正式报表仅使用已记账凭证，并可追溯至明细", fg=C_TEXT_MUTED)
@@ -1715,24 +1731,49 @@ class FinanceApp:
         path.parent.mkdir(parents=True, exist_ok=True)
         wb.save(str(path))
 
+    def _resolve_cjk_font(self) -> str | None:
+        """优先使用随包内置的 CJK 字体；找不到时回退到系统 Windows 字体目录。"""
+        here = Path(__file__).resolve().parent
+        candidates = [
+            here / "simhei.ttf",
+            Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "simhei.ttf",
+            Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "msyh.ttc",
+        ]
+        for c in candidates:
+            if c.exists():
+                return str(c)
+        return None
+
     def _export_report_pdf(self, path: Path, bundle: dict) -> None:
         from fpdf import FPDF
         pdf = FPDF()
+        cjk = self._resolve_cjk_font()
+        if cjk:
+            try:
+                pdf.add_font("CJK", "", cjk)
+                pdf.add_font("CJK", "B", cjk)
+                pdf.add_font("CJK", "I", cjk)
+                pdf.add_font("CJK", "BI", cjk)
+                font = "CJK"
+            except Exception:
+                font = "Helvetica"
+        else:
+            font = "Helvetica"
         pdf.add_page()
         pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_font(font, "B", 14)
         pdf.cell(0, 10, f"财务报表 {bundle['period']}", ln=True, align="L")
         pdf.ln(2)
         # Helper to write a section
         def _section(title, headers, rows):
-            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_font(font, "B", 11)
             pdf.cell(0, 8, title, ln=True)
-            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_font(font, "B", 9)
             col_w = 190 / max(len(headers), 1)
             for h in headers:
                 pdf.cell(col_w, 7, str(h), border=1, align="C")
             pdf.ln()
-            pdf.set_font("Helvetica", "", 9)
+            pdf.set_font(font, "", 9)
             for row in rows:
                 for value in row:
                     pdf.cell(col_w, 7, str(value) if value is not None else "", border=1, align="L")

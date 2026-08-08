@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _maintenance = threading.local()
 
 
@@ -712,11 +712,49 @@ def _migration_4(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_5(conn: sqlite3.Connection) -> None:
+    """进销存：商品、库存单据、库存余额。"""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS product ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, sku TEXT, name TEXT NOT NULL, spec TEXT, unit TEXT, "
+        "category TEXT, cost_method TEXT DEFAULT 'weighted', note TEXT, created_at TEXT)"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_product_sku ON product(sku) "
+        "WHERE sku IS NOT NULL AND TRIM(sku)<>''"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS stock_doc ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, doc_no TEXT UNIQUE, doc_type TEXT, date TEXT, period TEXT, "
+        "partner_id INTEGER, summary TEXT, status TEXT DEFAULT 'posted', voucher_id INTEGER, "
+        "creator TEXT, created_at TEXT, updated_at TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS stock_doc_line ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, stock_doc_id INTEGER, product_id INTEGER, qty REAL DEFAULT 0, "
+        "unit_price_cents INTEGER DEFAULT 0, amount_cents INTEGER DEFAULT 0, "
+        "sale_price_cents INTEGER DEFAULT 0, sale_amount_cents INTEGER DEFAULT 0, note TEXT, "
+        "FOREIGN KEY(stock_doc_id) REFERENCES stock_doc(id) ON DELETE CASCADE, "
+        "FOREIGN KEY(product_id) REFERENCES product(id))"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS stock_balance ("
+        "product_id INTEGER PRIMARY KEY, qty REAL DEFAULT 0, amount_cents INTEGER DEFAULT 0, "
+        "avg_cost_cents INTEGER DEFAULT 0, updated_at TEXT, "
+        "FOREIGN KEY(product_id) REFERENCES product(id))"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS stock_doc_sequence ("
+        "period TEXT PRIMARY KEY, last_seq INTEGER NOT NULL CHECK(last_seq >= 0))"
+    )
+
+
 MIGRATIONS = [
     (1, "legacy_baseline", _migration_1),
     (2, "accounting_controls", _migration_2),
     (3, "legacy_data_normalization", _migration_3),
     (4, "constraints_and_indexes", _migration_4),
+    (5, "inventory", _migration_5),
 ]
 
 

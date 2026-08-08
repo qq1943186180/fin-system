@@ -35,6 +35,12 @@ SOURCE_ALIASES = {
     "期初": "opening",
     "import": "import",
     "导入": "import",
+    "closing": "closing",
+    "结转": "closing",
+    "期末": "closing",
+    "inventory": "inventory",
+    "进销存": "inventory",
+    "库存": "inventory",
 }
 DOC_TYPE_ALIASES = {"receipt": "receipt", "收款": "receipt", "payment": "payment", "付款": "payment"}
 
