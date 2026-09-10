@@ -160,7 +160,8 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 - **阶段 0–5 全部完成**：骨架 / 记账内核 / 报表 / 往来 / 报销 / 票据+飞书+邮件收票。
 - 另有**已上线的增量模块**（第 3 节目录树已含）：进销存 `inventory.py` + 期末处理 `closing.py` + 数据问题 `integration.py`，GUI 导航共 11 页。
 - 已打包 onedir **真 exe**，真机冒烟通过；UI = 浅色商务风（`clam` 主题，含表格斑马纹）。
-- **exe 比源码新**（exe 22:32 > 源码最新 22:25）→ `release\` 里是当前代码，无需重打包。
+- **release 已随 P1/P3 一起重打包**（exe `00:07`，8.86 MB）：实测含 P1 备份修复（`_BACKUP_NAME_RE` 出现 4 次）与 P3 改名（`configure_light_style` 3 次、无 `configure_dark_style =` 别名）；`财务系统.exe --self-check` 返回 `{"ok": true}`（13 项运行时组件）。P4 的 `build.ps1` 门禁改动**不进二进制**，但同一轮构建实跑验证过。
+- ✅ **回归基线：`pytest` 111 passed**（P1 前 41 → P1 后 52 → P2/P3/P4/P5 后 111）。
 - 账套实际数据：科目 46 · 凭证 13 · 往来（档案）2 · 期间 **2026-07**。
   - 补口径：凭证 13 = 已记账 11 + 草稿 1 + 待审核 1；其中有 3 条 `test data cleanup` 冲销凭证 + 1 条草稿冲销，属测试残留。
   - 往来 2 = `partner` 客户/供应商**档案** 2 条；应收应付台账 `arap_item` **0 条**。
@@ -175,12 +176,11 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 
 - [ ] **「全部补收进来」**：163 历史发票补收（约 60 封）—— 前置修复已就绪，**尚未执行**（会真实连邮箱、真实写库）。
 - [x] ✅ **P1 备份缺陷（已修复，提交 `3d27438`）**：原 `gui/main.py` `_run_startup_backup()` 有两处真实缺陷 —— ①「今天是否已备份」用 `date.today().isoformat()`（`finance-2026-09-10`）去匹配备份文件名 `finance-20260910-...` 的 `%Y%m%d` 前缀，**永不相等**，使「每天首启一次」退化成「每次启动都备份」，叠加 `MAX_BACKUPS=5` 后同一天的多次启动把历史全滚掉（**生产库实测 5 份全是 9/10 同一天，等于实际没有保留策略**）；②整函数 `except Exception: pass`，备份失败用户无感。现已改为：正则精确匹配自动备份命名（迁移前备份不参与轮转）+ 分层保留（7 日 / 4 周 / 6 月，超期才淘汰）+ 失败记 `LOG.error` 并在设置页标红。详见 `docs/architecture-review-2026-09-10-followup.md` §2.1。
-- [ ] 🟡 **P2 `.gitignore` 纵深防御缺口**：只忽略了 `config/feishu.json`，而 `config/credentials.json`／`config/settings.json`／`config/*.blob` **都不被忽略**（`git check-ignore` 实测）。当前它们在 AppData 无泄露，但项目根已有 `config/` 目录，误放 + `git add .` 即进仓库。建议改为 `config/*.json` + `config/*.blob` + `!config/feishu.example.json`。
-- [ ] 🟡 **P3 `configure_dark_style` 命名与实现相反**（`gui/ui_theme.py:151`）：实为 `configure_light_style` 别名，配色全是浅色。名字会误导后人去「修」成深色——而深色风你已明确否决。建议重命名并删别名。
-- [ ] 🟢 **P4 依赖三处手工同步**（`pyproject.toml` / `build.ps1:224` / `spec.hiddenimports`）：无机器校验，PyInstaller 对缺失 hiddenimport 只发 WARNING → exe 静默缺库。建议在 `build.ps1` 加构建期一致性断言。
-- [ ] **账套公司信息未填**：`company` 表 1 行但 `name / tax_no / addr / note` 全为空 → 报表抬头公司名会是空的，建议先补。
-- [ ] 发票补关联：把 `invoices\failed\` 里 OCR 已成功的 PDF 回填到 `invoice_doc.file_path`（现 6 张发票的 `file_path`/`file_hash` 均为空串）。
-- [ ] 测试残留数据清理：`invoices\failed\` 6 个 PDF（含 3 个 `failed_invoice_*.pdf` 早期样本）、3 条 `test data cleanup` 冲销凭证。**清理前先确认清单。**
+- [x] ✅ **P2 `.gitignore` 纵深防御缺口（已修复，提交 `d75c8d2`）**：原只忽略 `config/feishu.json`，而 `config/credentials.json`（全部密钥的仓库）／`config/settings.json`／`config/*.blob` **都不被忽略**（`git check-ignore` 实测）。已改为按类型覆盖 `config/*.json` + `config/*.blob` + `!config/feishu.example.json` + `db/*.db`——**以后新增的配置文件默认安全**。注意规则写 `config/*.json` 而非 `config/`：忽略整个目录会让 `!` 放行规则失效。回归测试 `tests/test_repo_hygiene.py`（10 例，真实调用 `git check-ignore`）；旧规则下 5 例失败，新规则全绿。
+- [x] ✅ **P3 `configure_dark_style` 命名与实现相反（已修复，提交 `1051a1b`）**：该别名实为 `configure_light_style`（`gui/ui_theme.py:151`），配色全浅色，会误导后人去「修」成深色（而深色风已明确否决）。已删除别名并把 `gui/main.py` 两处调用点、三个页面里未使用的 import 全部改名。回归测试 `tests/test_ui_theme.py`（13 例，含真实 Tk 断言实际生效主题为 `clam`）；把主题优先级改成 `vista` 优先可复现失败。
+- [x] ✅ **P4 依赖三处手工同步（已修复，提交 `1039b2c`）**：`pyproject.toml` / `build.ps1` / `spec.hiddenimports` 三处靠人脑同步，而 PyInstaller 对缺失 hiddenimport 只发 WARNING → exe 静默缺库（openpyxl / fpdf2 导出报表时已真实发生）。已在 `build.ps1` `[2/6]` 装包后新增 `Assert-DependencyParity` 门禁：脚本清单 vs pyproject、每个声明项必须在 spec hiddenimports 里、每个包必须真实可 import，命中漂移即中止构建。pip 名/import 名映射（`fpdf2`→`fpdf`）集中到一处。回归测试 `tests/test_dependency_parity.py`（8 例）；实跑构建输出 `dependency parity OK: imap_tools, pystray, openpyxl, fpdf`。
+- [x] ✅ **P5 业务数据回补（工具与测试已就绪，提交 `21ed316`；⚠️ 尚未对生产库执行）**：详见下方 §10.1。
+- [ ] 测试残留数据清理：`invoices\failed\` 6 个 PDF（含 3 个 `failed_invoice_*.pdf` 早期样本，25 字节占位符）、3 条 `test data cleanup` 冲销凭证。**清理前先确认清单。**（回补工具已把 3 个 25 字节占位符自动识别并忽略。）
 - [ ] 可选小清理：`config/feishu.app_secret.blob`（旧版孤儿文件，当前代码无 `.blob` 读写）、`release/frozen-self-check.json`（7/11 旧文件）、`settings.json` 与 `feishu.json` 里重复的飞书配置段。
 - ℹ️ `partner.type` 中英混用（中文「客户」+ 英文 `supplier`）：**代码已用 `type IN (?,?)` 兼容，非 bug**，新数据由 `add_partner` 自动归一化。可不处理。
 - ❌ 报税/税务申报：明确**不做**。
@@ -189,6 +189,73 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 > 架构层面的完整体检见 `docs/architecture-review-2026-08-08.md`（基准）与
 > `docs/architecture-review-2026-09-10-followup.md`（核验 + 增量）。
 > 前者的 TOP 5 技术债**现已全部关闭**；后者明确列出「不建议做」的事项（拆 main.py / 引 ORM / 补 CI 等），避免过度工程。
+
+
+### 10.1 P5 业务数据回补（工具已就绪，待确认后执行）
+
+**工具**：`tools/backfill_business_data.py`（默认只读；`--apply` 才写库）
+**测试**：`tests/test_backfill_business_data.py`（29 例，全绿）
+
+#### 排查结论
+
+1. **`company` 表**：恒为 1 行且 `name/tax_no/addr/note` 全空 → 报表/打印抬头取不到公司名。**只有抬头是直接可补的，需要一个你确认的注册地址。**
+2. **`invoice_doc.file_path` 恒为空串**。根因**不在财务系统**，而在**外部发票识别 agent**：
+   `C:\Users\li1\invoice-agent\invoice_agent.py` 的 `summarize()` 把 OCR 结果压缩成
+   6 个中文字段（发票号码/开票日期/销售方/金额/税额/购买方），**丢掉了 `file`（文件名）
+   以及 `销售方税号` / `购买方税号` / `价税合计`**。财务系统
+   `register_invoice(raw, raw.get("file_path") or raw.get("file"))` 因此永远拿不到
+   `source_file`，`file_path` 只能是空串；同一原因也让 2026-07-12 入库的 4 张滴滴发票
+   税号为空。**根因不修，以后新收的发票照样是空。**
+
+#### 6 行发票全部可硬关联，无一行靠猜
+
+| 库内 id | 发票号码 | 原始文件 | 证据来源 |
+|---|---|---|---|
+| 6 | 26337000000663360916 | `invoice-agent\invoices\滴滴电子发票A.pdf` | `results/ocr_result.json` |
+| 7 | 26447000001378352112 | `…\滴滴电子发票B.pdf` | 同上 |
+| 8 | 26217000000285335773 | `…\滴滴电子发票C.pdf` | 同上 |
+| 9 | 26117000001021765684 | `…\滴滴电子发票D.pdf` | 同上 |
+| 10 | 26337000000601987996 | `FinanceSystem\invoices\failed\【一嗨-403.00元】…pdf` | 单文件重新识别 |
+| 11 | 26317000002656636842 | `…\【一嗨-216.96元】…pdf` | 同上 |
+
+关键点：`ocr_result.json` 里 `file` 与 `发票号码` 是**成对的**，所以 id=6~9 是按发票号
+**精确 join**，不是按顺序猜。id=10/11 用识别 agent 的单文件模式重新识别取号，
+号码与库内**完全一致**（含 `seller_tax_no`）。归档到
+`FinanceSystem\invoices\archive\<开票月份>\<发票号>_<原名>`，路径由库自己持有，
+不依赖 agent 的暂存目录。
+
+同时发现：`FinanceSystem\invoices\failed\` **没有"成功归档"目录**，历史上 OCR 成功的
+PDF 从未落盘到财务系统侧（只有元数据进库）；该目录里 3 个 25 字节的
+`failed_invoice_*.pdf` 是早期失败占位符（工具已自动忽略），另 1 个
+`订单…结算单.pdf` 是结算单不是发票（识别不出发票号，正确忽略）。
+
+#### 执行方式（需你确认）
+
+```bash
+# 1) 只读看方案（已跑过，6 行全部可关联）
+python tools/backfill_business_data.py
+
+# 2) 确认后写入（自动备份 → 归档文件 → 事务写库 → 写审计）
+python tools/backfill_business_data.py \
+  --company-name "高迥（杭州）贸易有限责任公司" \
+  --company-tax-no "91330105MACRGYRN32" \
+  --company-addr "<待你确认的注册地址>" \
+  --apply
+```
+
+写入前后可自查：`invoice_doc.file_path` 应指向真实存在的文件、
+`audit_event` 新增 `invoice_file_linked` / `company_field_updated`。
+**执行前请先退出「财务系统」程序**（已确认当前未在运行）。
+
+#### 根因修复方案（未实施，需你点头）
+
+| 步骤 | 改动 | 风险 |
+|---|---|---|
+| ① | `invoice-agent\invoice_agent.py::summarize()` 的 row 里补上 `file_path`（绝对路径）与 `销售方税号`/`购买方税号`/`价税合计` | 低，纯**新增** key，现有 6 个中文字段不变，下游 `_text()` 查找兼容 |
+| ② | 财务系统入库时把源文件**归档进自己的数据根**、`file_path` 指向归档副本 | 中，改动 `register_invoice` 的写入行为，属非平凡改动，需先过方案 |
+| ③ | 给 `load_invoices` 加一条告警：summary 行缺 `file_path` 时记 `LOG.warning` | 低，纯观测 |
+
+①③ 只是止血与可观测；②才让链路长期自洽。建议 ①②③ 一起做，但 ② 想先听你的意见。
 
 
 ---
@@ -246,9 +313,9 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 | 待确认子集 | 5 张 ¥1,340.00 | 5 张 134,000 分 → **¥1,340.00** | ✅ |
 | 待审核子集 | 1 张 ¥96.83 | 1 张 9,683 分 → **¥96.83** | ✅ |
 | 邮箱状态 | 163 启用 / QQ 禁用 | 163 `enabled=true, last_uid=1691478373`；QQ `enabled=false` | ✅ |
-| pytest 基线 | 41 passed | 核验时 **41 passed**；修复 P1 后 **52 passed**（新增 11 例备份回归） | ✅ |
+| pytest 基线 | 41 passed | 核验时 **41 passed**；P1 后 **52**；P2/P3/P4 后 **83**；P5 后 **111 passed** | ✅ |
 | 验收基线 | 17 OK / 0 FAIL | **合计：17 OK / 0 FAIL**（11 个页面全构建成功） | ✅ |
-| git 状态 | 分支 master | `master`，工作区干净；核验时 HEAD = `8ae405a`，P1 修复后 = `3d27438` | ✅ |
+| git 状态 | 分支 master | `master`；核验时 HEAD = `8ae405a` → P1 `3d27438` → P2 `d75c8d2` → P3 `1051a1b` → P4 `1039b2c` → P5 `21ed316` | ✅ |
 | 用户喜好 | 源码/数据分离 | 结构确实分离；测试有 `.test-home` 隔离守卫（`conftest.py` 防写生产库） | ✅ |
 
 **复核中发现并已修正的文档错误**：目录树漏了 `closing/inventory/integration/ocr_invoice/page_closing/page_inventory/simhei.ttf` 与 3 个导航页；「最近提交」写的是 `99b397e`（实际 `8ae405a`）；第 8 节漏了外部 OCR 项目 `C:\Users\li1\invoice-agent`；第 9 节未注明「往来 2」是档案数。
@@ -268,11 +335,30 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 
 > 注：现存那 5 份同日备份，在**下次启动程序**时会被新策略收敛为 1 份（同一天只留最新）。这是预期行为，不是数据丢失 —— 它们内容完全相同（同为当日账套快照）。
 
+**P2~P5 复核（2026-09-10 深夜）**：
+
+| 核验项 | 实测 | 结论 |
+|---|---|---|
+| P2 忽略规则 | `git check-ignore -v` 实测：`credentials.json` / `settings.json` / `feishu.json` / `*.blob` / 任意新 `.json` 全部命中；`feishu.example.json` / `README.md` 放行 | ✅ |
+| P2 无密钥入库 | `git add -A -n` 只显示 `.gitignore`，无任何凭据文件 | ✅ |
+| P3 源码残留 | 全仓 `configure_dark_style` 源码引用为 0（仅剩解释性注释） | ✅ |
+| P3 真实主题 | 真实 Tk 断言实际生效主题 = `clam`，选中页签可读；改成 `vista` 优先即失败 | ✅ |
+| P4 门禁存在且被接线 | 静态断言 `Assert-DependencyParity` 已定义、已调用，且顺序在 install 之后、PyInstaller 之前 | ✅ |
+| P4 实跑 | 完整 `build.ps1` 输出 `dependency parity OK: imap_tools, pystray, openpyxl, fpdf`（证明 `fpdf2`→`fpdf` 映射端到端生效） | ✅ |
+| P4 变异性 | 只往 `pyproject.toml` 注入 `requests` → 2 例失败；还原后全绿 | ✅ |
+| P5 只读不改库 | 不加 `--apply` 对生产库跑：6 行全部规划、库内 `file_path` 仍为空串、`audit_event` 无新增、无 `backups\` 目录产生 | ✅ |
+| P5 关联正确性 | 6 行全部按发票号精确 join，金额二次校验通过；id=10/11 重新识别出的号码与库内**完全一致** | ✅ |
+| P5 变异性 | 同时移除「执行前复核」与「SQL 空列守卫」→ `test_apply_blocks_overwriting_a_path_filled_after_planning` 必定失败 | ✅ |
+| P5 备份 WAL 安全 | 未 checkpoint 的 WAL 数据必须出现在备份里（专项用例验证通过） | ✅ |
+| P5 未执行写库 | `company` 仍全空、6 张发票 `file_path` 仍空 → **确实没有擅自改生产数据** | ✅ |
+
 **遗留风险（未修，仅记录）**：
-1. `company` 表全空 → 报表抬头公司名为空。
+1. `company` 表全空 → 报表抬头公司名为空（**P5 工具已备好，待确认地址后执行**）。
 2. `partner.type` 中文「客户」/ 英文 `supplier` 混用（**代码已兼容 `type IN (?,?)`，非 bug**）。
-3. 6 张发票 `file_path` 空 → 与原始 PDF 无关联。
-4. `invoices\failed\` 6 个 PDF + 3 条 `test data cleanup` 冲销凭证属测试残留。
+3. 6 张发票 `file_path` 空 → 与原始 PDF 无关联（**P5 工具已备好，6 行全部可硬关联**）。
+4. `invoices\failed\` 6 个 PDF + 3 条 `test data cleanup` 冲销凭证属测试残留（其中 3 个 25 字节占位符）。
 5. `release\frozen-self-check.json` 是 2026-07-11 的旧文件（`logs\` 下另有一份）。
 6. 配置双份：`settings.json` 里有 `feishu` 段，`feishu.json` 里又有一份同内容。
+7. **根因未修**：`invoice-agent\invoice_agent.py::summarize()` 丢字段 → 以后新收发票 `file_path` 依旧为空、税号依旧丢失（方案见 §10.1）。
+8. 财务系统**没有"成功归档"目录**，历史上 OCR 成功的 PDF 从未落盘到财务系统侧，只有元数据进库。
 
