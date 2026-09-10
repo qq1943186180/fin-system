@@ -161,13 +161,16 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 - 另有**已上线的增量模块**（第 3 节目录树已含）：进销存 `inventory.py` + 期末处理 `closing.py` + 数据问题 `integration.py`，GUI 导航共 11 页。
 - 已打包 onedir **真 exe**，真机冒烟通过；UI = 浅色商务风（`clam` 主题，含表格斑马纹）。
 - **release 已随 P1/P3 一起重打包**（exe `00:07`，8.86 MB）：实测含 P1 备份修复（`_BACKUP_NAME_RE` 出现 4 次）与 P3 改名（`configure_light_style` 3 次、无 `configure_dark_style =` 别名）；`财务系统.exe --self-check` 返回 `{"ok": true}`（13 项运行时组件）。P4 的 `build.ps1` 门禁改动**不进二进制**，但同一轮构建实跑验证过。
-- ✅ **回归基线：`pytest` 111 passed**（P1 前 41 → P1 后 52 → P2/P3/P4/P5 后 111）。
+  - ⚠️ **P6（`1cf2be2`）改了 `modules/invoice_gui.py` / `modules/mail_processor.py`，release 尚未重打包** —— 发票归档逻辑需**重打包后才在 exe 里生效**（`build.ps1` 跑 `[6/6]` 即可，门禁会自动校验依赖一致性）。
+- ✅ **回归基线：`pytest` 130 passed**（P1 前 41 → P1 后 52 → P2/P3/P4/P5 后 111 → P6 后 130）。
 - 账套实际数据：科目 46 · 凭证 13 · 往来（档案）2 · 期间 **2026-07**。
   - 补口径：凭证 13 = 已记账 11 + 草稿 1 + 待审核 1；其中有 3 条 `test data cleanup` 冲销凭证 + 1 条草稿冲销，属测试残留。
   - 往来 2 = `partner` 客户/供应商**档案** 2 条；应收应付台账 `arap_item` **0 条**。
   - 期间 2026-07 取自凭证的 `period` 字段；`period` 表本身 **0 行**（期末处理状态未初始化，不影响记账）。
-- 发票库存：**共 6 张，价税合计 ¥1,436.83**（待确认 5 张 ¥1,340.00 + 待审核 1 张 ¥96.83）。
-  - ⚠️ 6 张发票的 `file_path` / `file_hash` 均为空串 —— 发票记录与原始 PDF **未建立关联**，原始文件只在 `invoices\failed\`。
+- 公司抬头：**已补齐**（`高迥（杭州）贸易有限责任公司` / `91330105MACRGYRN32` / `浙江省杭州市拱墅区东新街道东方茂商业中心1幢3层4062室`，与桌面 `执照.jpg` 一致）。
+- 发票库存：**共 6 张，账面价税合计 ¥1,436.83**（待确认 5 张 ¥1,340.00 + 待审核 1 张 ¥96.83）。
+  - ✅ 6 张发票的 `file_path` / `file_hash` / 税号**已全部补齐**，原件归档于 `invoices\archive\<开票月份>\`（提交 `21ed316` 执行）。
+  - 🔴 **但价税合计口径有误**：id=6~9 的 `tax_cents` 为 0、`total_cents` 漏计进项税额，**合计少计 ¥24.53**。正确值应为 6:`608.85` / 7:`9.05` / 8:`123.76` / 9:`99.74`。其中 id=9 **已生成待审核凭证**，修正需连带处理分录。**未修，详见 §10.2。**
 - 邮箱：163 **已启用**（水位线 `last_uid=1691478373`）；QQ 已禁用。
 
 ---
@@ -179,7 +182,8 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 - [x] ✅ **P2 `.gitignore` 纵深防御缺口（已修复，提交 `d75c8d2`）**：原只忽略 `config/feishu.json`，而 `config/credentials.json`（全部密钥的仓库）／`config/settings.json`／`config/*.blob` **都不被忽略**（`git check-ignore` 实测）。已改为按类型覆盖 `config/*.json` + `config/*.blob` + `!config/feishu.example.json` + `db/*.db`——**以后新增的配置文件默认安全**。注意规则写 `config/*.json` 而非 `config/`：忽略整个目录会让 `!` 放行规则失效。回归测试 `tests/test_repo_hygiene.py`（10 例，真实调用 `git check-ignore`）；旧规则下 5 例失败，新规则全绿。
 - [x] ✅ **P3 `configure_dark_style` 命名与实现相反（已修复，提交 `1051a1b`）**：该别名实为 `configure_light_style`（`gui/ui_theme.py:151`），配色全浅色，会误导后人去「修」成深色（而深色风已明确否决）。已删除别名并把 `gui/main.py` 两处调用点、三个页面里未使用的 import 全部改名。回归测试 `tests/test_ui_theme.py`（13 例，含真实 Tk 断言实际生效主题为 `clam`）；把主题优先级改成 `vista` 优先可复现失败。
 - [x] ✅ **P4 依赖三处手工同步（已修复，提交 `1039b2c`）**：`pyproject.toml` / `build.ps1` / `spec.hiddenimports` 三处靠人脑同步，而 PyInstaller 对缺失 hiddenimport 只发 WARNING → exe 静默缺库（openpyxl / fpdf2 导出报表时已真实发生）。已在 `build.ps1` `[2/6]` 装包后新增 `Assert-DependencyParity` 门禁：脚本清单 vs pyproject、每个声明项必须在 spec hiddenimports 里、每个包必须真实可 import，命中漂移即中止构建。pip 名/import 名映射（`fpdf2`→`fpdf`）集中到一处。回归测试 `tests/test_dependency_parity.py`（8 例）；实跑构建输出 `dependency parity OK: imap_tools, pystray, openpyxl, fpdf`。
-- [x] ✅ **P5 业务数据回补（工具与测试已就绪，提交 `21ed316`；⚠️ 尚未对生产库执行）**：详见下方 §10.1。
+- [x] ✅ **P5 业务数据回补（已对生产库执行，提交 `21ed316`，执行于 2026-09-11 00:44）**：详见下方 §10.1。
+- [x] ✅ **P6 发票原件归档 + `file_path` 落地 + 金额口径纠正（已修复，提交 `1cf2be2`）**：`invoice_doc.file_path` 恒为空的根因已修 —— 外部 agent `summarize()` 补齐 `file_path`/税号/金额三件套，财务系统入库时把原件归档进自己的数据根，`load_invoices` 对缺路径行记 WARNING。回归 `tests/test_invoice_archive.py`（18 例）。详见 §10.2。
 - [ ] 测试残留数据清理：`invoices\failed\` 6 个 PDF（含 3 个 `failed_invoice_*.pdf` 早期样本，25 字节占位符）、3 条 `test data cleanup` 冲销凭证。**清理前先确认清单。**（回补工具已把 3 个 25 字节占位符自动识别并忽略。）
 - [ ] 可选小清理：`config/feishu.app_secret.blob`（旧版孤儿文件，当前代码无 `.blob` 读写）、`release/frozen-self-check.json`（7/11 旧文件）、`settings.json` 与 `feishu.json` 里重复的飞书配置段。
 - ℹ️ `partner.type` 中英混用（中文「客户」+ 英文 `supplier`）：**代码已用 `type IN (?,?)` 兼容，非 bug**，新数据由 `add_partner` 自动归一化。可不处理。
@@ -191,7 +195,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 > 前者的 TOP 5 技术债**现已全部关闭**；后者明确列出「不建议做」的事项（拆 main.py / 引 ORM / 补 CI 等），避免过度工程。
 
 
-### 10.1 P5 业务数据回补（工具已就绪，待确认后执行）
+### 10.1 P5 业务数据回补（✅ 已于 2026-09-11 00:44 对生产库执行）
 
 **工具**：`tools/backfill_business_data.py`（默认只读；`--apply` 才写库）
 **测试**：`tests/test_backfill_business_data.py`（29 例，全绿）
@@ -229,34 +233,100 @@ PDF 从未落盘到财务系统侧（只有元数据进库）；该目录里 3 �
 `failed_invoice_*.pdf` 是早期失败占位符（工具已自动忽略），另 1 个
 `订单…结算单.pdf` 是结算单不是发票（识别不出发票号，正确忽略）。
 
-#### 执行方式（需你确认）
+#### 执行记录（✅ 已完成）
 
 ```bash
-# 1) 只读看方案（已跑过，6 行全部可关联）
+# 1) 只读看方案（先跑过，6 行全部可关联、无模糊项）
 python tools/backfill_business_data.py
 
-# 2) 确认后写入（自动备份 → 归档文件 → 事务写库 → 写审计）
+# 2) 写入（自动备份 → 归档文件 → 事务写库 → 写审计）—— 实际执行命令
 python tools/backfill_business_data.py \
   --company-name "高迥（杭州）贸易有限责任公司" \
   --company-tax-no "91330105MACRGYRN32" \
-  --company-addr "<待你确认的注册地址>" \
+  --company-addr "浙江省杭州市拱墅区东新街道东方茂商业中心1幢3层4062室" \
   --apply
 ```
 
-写入前后可自查：`invoice_doc.file_path` 应指向真实存在的文件、
-`audit_event` 新增 `invoice_file_linked` / `company_field_updated`。
-**执行前请先退出「财务系统」程序**（已确认当前未在运行）。
+**执行前**：确认「财务系统」exe 未运行（`Get-Process` 无匹配，DB 最后写入 16:51）、两个 `python.exe` 均为 hermes gateway 与账套无关。
 
-#### 根因修复方案（未实施，需你点头）
+**执行结果（实测复核）**：
 
-| 步骤 | 改动 | 风险 |
+| 项目 | 结果 |
+|---|---|
+| 自动备份 | `db\backups\finance.db.backfill-20260911-004425.bak`（在线备份 API + `integrity_check` + 行数校验） |
+| 归档文件 | 6 个，`invoices\archive\2026-07\` ×4 + `2026-09\` ×2 |
+| 归档存在性 | 逐行 `os.path.exists` → **6/6 EXISTS** |
+| 发票关联 | 6 行 `file_path`/`file_hash` 全部落地；id=6~9 另补 `seller_tax_no`/`buyer_tax_no` |
+| 公司抬头 | `name` / `tax_no` / `addr` 三字段写入，`note` 保持空 |
+| 审计留痕 | `audit_event` 新增 6 条 `invoice_file_linked` + 3 条 `company_field_updated`（id 34–42） |
+| 忽略项 | 3 个 25 字节 `failed_invoice_*.pdf` 占位符 + 1 份结算单（非发票）—— 均正确跳过 |
+
+**⚠️ 执行中额外发现的口径问题**：`ocr_result.json` 显示 id=6~9 的
+`税额合计` 非零（17.74 / 0.27 / 3.61 / 2.91），但库里 `tax_cents` 全为 0、
+`total_cents` = `net_cents`。回补工具**按要求只填 `file_path`/`file_hash`/税号**，
+未触碰金额列 —— 金额修正单列为 §10.2。
+
+#### 为什么 id=6~9 的「金额」会错（根因链）
+
+`invoice_agent.py::summarize()` 原先把 `金额` 写成
+`f.get("价税合计") or f.get("金额合计")`。而 OCR 对滴滴票**抽不到**「价税合计」
+（正则只认 `价税合计…¥数字` 的同行形态），于是 `金额` 落到了 `金额合计`（**不含税**值）。
+财务系统 `normalize_invoice()` 又把 summary 的 `金额` 当 `net_amount_cents`，
+`税额合计` 因 key 名不匹配（summary 里叫「税额」）取到 0，最终
+`total = net + tax = net` —— **进项税被静默丢弃**。该漏洞已在 P6 一并修掉
+（`summarize()` 现输出 `金额合计`/`税额合计`/`价税合计` 三个独立字段，
+价税合计缺失时用「不含税 + 税额」兜底）。
+
+
+### 10.2 P6 根因修复（✅ 已完成）+ 待决策的历史金额修正（🔴 未做）
+
+#### 已完成（提交 `1cf2be2`）
+
+| 步骤 | 改动 | 落点 |
 |---|---|---|
-| ① | `invoice-agent\invoice_agent.py::summarize()` 的 row 里补上 `file_path`（绝对路径）与 `销售方税号`/`购买方税号`/`价税合计` | 低，纯**新增** key，现有 6 个中文字段不变，下游 `_text()` 查找兼容 |
-| ② | 财务系统入库时把源文件**归档进自己的数据根**、`file_path` 指向归档副本 | 中，改动 `register_invoice` 的写入行为，属非平凡改动，需先过方案 |
-| ③ | 给 `load_invoices` 加一条告警：summary 行缺 `file_path` 时记 `LOG.warning` | 低，纯观测 |
+| ① | `summarize()` 补齐 `file_path`（绝对）/`销售方税号`/`购买方税号`/`金额合计`/`税额合计`/`价税合计`；价税合计缺失时用「不含税 + 税额」兜底；原 6 个中文字段保留 | 外部 `C:\Users\li1\invoice-agent\invoice_agent.py` |
+| ② | 新增 `_archive_invoice_file()`，在 `normalize_invoice()` 内把原件复制到 `<数据根>\invoices\archive\<开票月份>\<发票号>_<原名>`；同名不同内容加 `(2)` 后缀不覆盖；失败降级沿用原路径、**绝不阻断记账**；`settings.invoice_archive_enabled=false` 可关 | `modules/invoice_gui.py` |
+| ③ | `mail_processor` 在临时文件被删除前把它作为 `source_file` 传入入库（此前只取 OCR 的 `fields`、丢掉 `file` 键，原件随 `finally` 一起消失） | `modules/mail_processor.py` |
+| ④ | `load_invoices` 对缺 `file_path` 的行记 `LOG.warning` | `modules/invoice_gui.py` |
+| ⑤ | `INVOICES_ARCHIVE_DIR` 常量 + `ensure_app_dirs()` 创建 | `app_paths.py` |
 
-①③ 只是止血与可观测；②才让链路长期自洽。建议 ①②③ 一起做，但 ② 想先听你的意见。
+回归 `tests/test_invoice_archive.py` 18 例；**变异验证**：移除归档调用或 `source_file`
+传递 → 4 例失败（证明测试真在保护行为）。全量 **130 passed**。
 
+> ⚠️ `logging_setup` 里 `logger.propagate = False`，故 `caplog` 抓不到这些告警，
+> 测试改为直接断言 `LOG.warning` 调用；日志本身正常写入 `logs\` 下文件。
+
+#### 🔴 待你决策：id=6~9 的历史金额修正
+
+新发现的数据错误，**不在原 P6 三步范围内**，故未擅自写库：
+
+| id | 发票号码 | 现值 net/tax/total | 票面真值（`ocr_result.json` 硬证据） | 偏差 |
+|---|---|---|---|---|
+| 6 | 26337000000663360916 | 591.11 / 0 / 591.11 | 591.11 / **17.74** / **608.85** | 少计 17.74 |
+| 7 | 26447000001378352112 | 8.78 / 0 / 8.78 | 8.78 / **0.27** / **9.05** | 少计 0.27 |
+| 8 | 26217000000285335773 | 120.15 / 0 / 120.15 | 120.15 / **3.61** / **123.76** | 少计 3.61 |
+| 9 | 26117000001021765684 | 96.83 / 0 / 96.83 | 96.83 / **2.91** / **99.74** | 少计 2.91 |
+
+口径自证：四张票的 `不含税 / 价税合计` 均 ≈ `0.9709`（即 3% 征收率），与 OCR 抽出的
+`金额合计`/`税额合计` 完全吻合 —— 证实 `金额合计` 是不含税值、进项税被静默丢弃。
+
+**影响面差异**：
+
+- id=**6/7/8 未入账**（`status=待确认`，无凭证）→ 只改 `invoice_doc` 三个金额列，低风险。
+- id=**9 已生成凭证 15**（`status=待审核`、**未记账**、`posted_at=None`）→ 分录为
+  `借 5602 成本 96.83 / 贷 2202 应付 96.83`，**应付账款同样少记 2.91**（实付 99.74）。
+  修正必须连带处理分录，否则账实不符。
+
+**待你确认的会计口径**（决定怎么修）：
+
+- 滴滴开的是**增值税电子普通发票**（3% 征收率）。若按普票处理 → **不可抵扣进项税**，
+  成本费用按**价税合计**全额入账，即凭证金额由 `591.11` 改为 `608.85`（借贷同增）；
+  `invoice_doc` 的 `tax_cents` 仍应如实记录票面 `17.74`（**台账 ≠ 分录**）。
+- 若你实际取得的是**可抵扣凭证** → 分录需拆
+  `借 5602 (不含税) / 借 2221 应交税费—应交增值税(进项税额) / 贷 2202 (价税合计)`。
+
+请告知走哪一种。我会照 P5 同一套安全姿势执行（只读先出方案 → 自动备份 →
+三层防覆盖 → 写 `audit_event` 留痕 → 复核）并单独提交。
 
 ---
 
@@ -352,13 +422,34 @@ python tools/backfill_business_data.py \
 | P5 备份 WAL 安全 | 未 checkpoint 的 WAL 数据必须出现在备份里（专项用例验证通过） | ✅ |
 | P5 未执行写库 | `company` 仍全空、6 张发票 `file_path` 仍空 → **确实没有擅自改生产数据** | ✅ |
 
-**遗留风险（未修，仅记录）**：
-1. `company` 表全空 → 报表抬头公司名为空（**P5 工具已备好，待确认地址后执行**）。
-2. `partner.type` 中文「客户」/ 英文 `supplier` 混用（**代码已兼容 `type IN (?,?)`，非 bug**）。
-3. 6 张发票 `file_path` 空 → 与原始 PDF 无关联（**P5 工具已备好，6 行全部可硬关联**）。
-4. `invoices\failed\` 6 个 PDF + 3 条 `test data cleanup` 冲销凭证属测试残留（其中 3 个 25 字节占位符）。
-5. `release\frozen-self-check.json` 是 2026-07-11 的旧文件（`logs\` 下另有一份）。
-6. 配置双份：`settings.json` 里有 `feishu` 段，`feishu.json` 里又有一份同内容。
-7. **根因未修**：`invoice-agent\invoice_agent.py::summarize()` 丢字段 → 以后新收发票 `file_path` 依旧为空、税号依旧丢失（方案见 §10.1）。
-8. 财务系统**没有"成功归档"目录**，历史上 OCR 成功的 PDF 从未落盘到财务系统侧，只有元数据进库。
+**遗留风险（截至 2026-09-11 01:00）**：
+
+| # | 项 | 状态 |
+|---|---|---|
+| 1 | `company` 表全空 → 报表抬头公司名为空 | ✅ **已修**（`21ed316` 工具已执行，抬头三字段写入） |
+| 2 | `partner.type` 中文「客户」/ 英文 `supplier` 混用 | ℹ️ 代码已兼容 `type IN (?,?)`，**非 bug** |
+| 3 | 6 张发票 `file_path` 空 → 与原始 PDF 无关联 | ✅ **已修**（6/6 归档落地，逐行 `os.path.exists` 复核） |
+| 4 | `invoices\failed\` 残留 + 3 条 `test data cleanup` 冲销凭证 | ⬜ 测试残留（含 3 个 25 字节占位符），清理前先确认清单 |
+| 5 | `release\frozen-self-check.json` 是 2026-07-11 旧文件 | ⬜ 陈旧，无功能影响 |
+| 6 | 配置双份：`settings.json` 的 `feishu` 段与 `feishu.json` 重复 | ⬜ 明确单一来源（`feishu.json` 为主） |
+| 7 | ~~**根因未修**：`summarize()` 丢字段 → 新收发票 `file_path` 依旧为空~~ | ✅ **已修**（`1cf2be2`，①~⑤ 全部落地 + 18 例回归） |
+| 8 | ~~财务系统**没有"成功归档"目录**，OCR 成功的 PDF 从未落盘~~ | ✅ **已修**（`1cf2be2`，新增 `invoices\archive\<月份>\` 并在入库时归档） |
+| 9 | 🔴 **新发现**：id=6~9 的 `tax_cents`/`total_cents` 漏计进项税（合计 ¥24.53）；id=9 已生成待审核凭证、应付账款同样少记 2.91 | 🔴 **未修**，会计口径待确认，见 §10.2 |
+| 10 | ⚠️ `release\财务系统\` 仍是 P1/P3 时的构建，**不含 P6 归档逻辑** | ⚠️ 待重打包（P6 改了 `invoice_gui.py`/`mail_processor.py`） |
+
+**P5/P6 实机复核（2026-09-11）**：
+
+| 核验项 | 实测 | 结论 |
+|---|---|---|
+| P5 写库已执行 | 6 行 `file_path` 全部指向真实存在的归档文件（逐行 `os.path.exists` → 6/6 EXISTS） | ✅ |
+| P5 公司抬头 | `company` = 高迥（杭州）贸易有限责任公司 / 91330105MACRGYRN32 / 浙江省杭州市拱墅区东新街道东方茂商业中心1幢3层4062室 | ✅ |
+| P5 审计留痕 | `audit_event` id 34–42：6 条 `invoice_file_linked` + 3 条 `company_field_updated` | ✅ |
+| P5 备份可恢复 | `finance.db.backfill-20260911-004425.bak`（在线备份 API + `integrity_check` + 行数校验） | ✅ |
+| P5 拒绝垃圾文件 | 3 个 25 字节 `failed_invoice_*.pdf` 占位符 + 1 份结算单被正确忽略 | ✅ |
+| P6 金额口径自证 | 四张滴滴票 `不含税/价税合计` ≈ 0.9709（3% 征收率），与 OCR 抽取字段吻合 | ✅ |
+| P6 归档不覆盖 | 同票命名但内容不同 → `(2)` 后缀；已有归档字节未变 | ✅ |
+| P6 归档不阻断 | 归档失败降级沿用原路径（开关 + 异常路径均有用例覆盖） | ✅ |
+| P6 原件保全 | 邮件链临时文件删除前已复制归档（端到端用例断言目标文件存在） | ✅ |
+| P6 变异验证 | 移除归档调用或 `source_file` 传递 → 4 例失败；还原后 18 例全绿 | ✅ |
+| P6 全量回归 | `pytest tests -q` → **130 passed** | ✅ |
 
