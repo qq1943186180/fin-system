@@ -97,6 +97,25 @@ def _today() -> str:
     return dt.date.today().isoformat()
 
 
+def _latest_posted_period() -> str | None:
+    """最近一个有「已记账」凭证的会计期间；无则返回 None。"""
+    try:
+        conn = db.get_conn()
+        try:
+            row = conn.execute(
+                "SELECT period FROM voucher WHERE status='posted' AND period IS NOT NULL "
+                "ORDER BY period DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        return str(row[0]) if row and row[0] else None
+    except Exception:
+        return None
+
+
+_ALL_ACCOUNTS = "全部科目"
+
+
 def _current_period() -> str:
     return dt.date.today().strftime("%Y-%m")
 
@@ -1638,7 +1657,7 @@ class FinanceApp:
         self.header_status.configure(text="账簿：科目余额表 + 序时簿，仅取已记账凭证", fg=C_TEXT_MUTED)
         controls = tk.Frame(parent, bg=C_BG)
         controls.pack(fill="x", pady=(0, 10))
-        period_var = tk.StringVar(value=_current_period())
+        period_var = tk.StringVar(value=_latest_posted_period() or _current_period())
         tk.Label(controls, text="会计期间", bg=C_BG, font=FONT).pack(side="left")
         ttk.Combobox(controls, textvariable=period_var, values=self._period_values(), width=12, state="readonly").pack(side="left", padx=6)
         zero_var = tk.BooleanVar(value=False)
@@ -1656,10 +1675,20 @@ class FinanceApp:
         notebook.add(ab_tab, text="科目余额表")
         notebook.add(journal_tab, text="序时簿")
         ab_tree = self._tree(ab_tab, (("code", "科目编码", 95, "w"), ("name", "科目名称", 180, "w"), ("category", "类别", 70, "center"), ("opening", "期初余额", 120, "e"), ("debit", "本期借方", 120, "e"), ("credit", "本期贷方", 120, "e"), ("ending_debit", "期末借方", 120, "e"), ("ending_credit", "期末贷方", 120, "e")), height=15)
-        journal_tree = self._tree(journal_tab, (("date", "日期", 95, "center"), ("vno", "凭证号", 135, "w"), ("seq", "序号", 55, "center"), ("account", "科目", 180, "w"), ("summary", "摘要", 250, "w"), ("debit", "借方", 110, "e"), ("credit", "贷方", 110, "e"), ("running", "累计余额", 120, "e"), ("source", "来源", 80, "center")), height=15)
+        journal_head = tk.Frame(journal_tab, bg=C_PANEL)
+        journal_head.pack(fill="x", pady=(6, 2))
+        tk.Label(journal_head, text="科目", bg=C_PANEL, font=FONT).pack(side="left", padx=(6, 4))
+        account_var = tk.StringVar(value=_ALL_ACCOUNTS)
+        account_box = ttk.Combobox(journal_head, textvariable=account_var, values=[_ALL_ACCOUNTS], width=24, state="readonly")
+        account_box.pack(side="left")
+        ledger_btn = ttk.Button(journal_head, text="在账务页看明细账 →")
+        ledger_btn.pack(side="left", padx=8)
+        tk.Label(journal_head, text="双击上方「科目余额表」任一科目，即在下方查看该科目的序时簿", bg=C_PANEL, font=FONT_SMALL, fg=C_TEXT_MUTED).pack(side="left", padx=6)
+        journal_tree = self._tree(journal_tab, (("date", "日期", 95, "center"), ("vno", "凭证号", 135, "w"), ("seq", "序号", 55, "center"), ("account", "科目", 180, "w"), ("summary", "摘要", 250, "w"), ("debit", "借方", 110, "e"), ("credit", "贷方", 110, "e"), ("balance", "余额", 120, "e"), ("source", "来源", 80, "center")), height=15)
         footer = tk.Label(parent, text="", font=FONT_B, bg=C_BG, fg=C_TEXT)
         footer.pack(anchor="e", pady=(8, 0))
         cache: dict = {"period": None}
+        journal_rows: list = []
 
         def _ab_values(row: dict) -> tuple:
             opening = _row_cents(row, "opening_debit_cents", "opening_debit") - _row_cents(row, "opening_credit_cents", "opening_credit")
@@ -1672,16 +1701,43 @@ class FinanceApp:
                 _money(_row_cents(row, "ending_credit_cents", "ending_credit")),
             )
 
-        def _journal_values(row: dict) -> tuple:
-            account = f"{row.get('account_code') or ''} {row.get('account_name') or ''}".strip()
-            running = _row_cents(row, "running_debit_cents", "running_debit") - _row_cents(row, "running_credit_cents", "running_credit")
-            return (
-                row.get("date"), row.get("vno"), row.get("seq"), account,
-                row.get("line_summary") or row.get("voucher_summary") or "",
-                _money(_row_cents(row, "debit_cents", "debit")),
-                _money(_row_cents(row, "credit_cents", "credit")),
-                _money(running),
-                row.get("source") or "",
+        def _render_journal():
+            # 依「科目」过滤框渲染序时簿；选中单科目时余额列=该科目逐笔累计（三栏式明细账）
+            journal_tree.delete(*journal_tree.get_children())
+            chosen = account_var.get()
+            code = "" if chosen == _ALL_ACCOUNTS else chosen.split(" ", 1)[0]
+            opening = 0
+            for row in (cache.get("account_balance_table") or {}).get("rows", []):
+                if code and str(row.get("code")) == code:
+                    opening = _row_cents(row, "opening_debit_cents", "opening_debit") - _row_cents(row, "opening_credit_cents", "opening_credit")
+                    break
+            running = opening
+            shown: list = []
+            for row in journal_rows:
+                if code and str(row.get("account_code")) != code:
+                    continue
+                if code:
+                    running += _row_cents(row, "debit_cents", "debit") - _row_cents(row, "credit_cents", "credit")
+                    balance_cents = running
+                else:
+                    balance_cents = _row_cents(row, "running_debit_cents", "running_debit") - _row_cents(row, "running_credit_cents", "running_credit")
+                account = f"{row.get('account_code') or ''} {row.get('account_name') or ''}".strip()
+                journal_tree.insert("", "end", values=(
+                    row.get("date"), row.get("vno"), row.get("seq"), account,
+                    row.get("line_summary") or row.get("voucher_summary") or "",
+                    _money(_row_cents(row, "debit_cents", "debit")),
+                    _money(_row_cents(row, "credit_cents", "credit")),
+                    _money(balance_cents),
+                    row.get("source") or "",
+                ))
+                shown.append(row)
+            full = cache.get("chronological_ledger") or {}
+            cache["chronological_ledger"] = {**full, "rows": shown}
+            balanced = bool(full.get("balanced"))
+            scope = _ALL_ACCOUNTS if not code else chosen
+            footer.configure(
+                text=f"科目余额表 {cache.get('ab_count', 0)} 行 · 序时簿[{scope}] {len(shown)} 行 · 借贷{'相等' if balanced else '不等'}",
+                fg=C_OK if balanced else C_DANGER,
             )
 
         def generate():
@@ -1695,18 +1751,19 @@ class FinanceApp:
                 messagebox.showerror("生成失败", str(exc), parent=self.root)
                 return
             cache.clear()
+            journal_rows.clear()
+            journal_rows.extend(journal.get("rows", []))
             cache.update({"period": period, "account_balance_table": account_table, "chronological_ledger": journal})
+            options = [f"{row.get('code')} {row.get('name')}".strip() for row in account_table.get("rows", [])]
+            options.sort()
+            account_box.configure(values=[_ALL_ACCOUNTS] + options)
+            if account_var.get() not in ([_ALL_ACCOUNTS] + options):
+                account_var.set(_ALL_ACCOUNTS)
             ab_tree.delete(*ab_tree.get_children())
-            journal_tree.delete(*journal_tree.get_children())
             for row in account_table.get("rows", []):
                 ab_tree.insert("", "end", values=_ab_values(row))
-            for row in journal.get("rows", []):
-                journal_tree.insert("", "end", values=_journal_values(row))
-            journal_ok = bool(journal.get("balanced"))
-            footer.configure(
-                text=f"科目余额表 {len(account_table.get('rows', []))} 行 · 序时簿 {len(journal.get('rows', []))} 行 · 序时簿{'借贷相等' if journal_ok else '借贷不等'}",
-                fg=C_OK if journal_ok else C_DANGER,
-            )
+            cache["ab_count"] = len(account_table.get("rows", []))
+            _render_journal()
 
         def _do_export(fmt: str):
             if cache.get("period") != period_var.get():
@@ -1738,11 +1795,25 @@ class FinanceApp:
             if not selection:
                 return
             code = str(ab_tree.item(selection[0], "values")[0] or "").strip()
-            if code:
-                self._pending_ledger_account = (code, period_var.get())
-                self._show_page("账务")
+            if not code:
+                return
+            target = next((str(v) for v in account_box.cget("values") if str(v).split(" ", 1)[0] == code), None)
+            if target:
+                account_var.set(target)
+                notebook.select(journal_tab)
+                _render_journal()
+
+        def open_ledger():
+            chosen = account_var.get()
+            if chosen == _ALL_ACCOUNTS:
+                messagebox.showinfo("提示", "请先在序时簿里选择一个科目。", parent=self.root)
+                return
+            self._pending_ledger_account = (chosen.split(" ", 1)[0], period_var.get())
+            self._show_page("账务")
 
         ab_tree.bind("<Double-1>", drill)
+        account_box.bind("<<ComboboxSelected>>", lambda _e: _render_journal())
+        ledger_btn.configure(command=open_ledger)
         gen_btn.configure(command=generate)
         csv_btn.configure(command=lambda: _do_export("csv"))
         xlsx_btn.configure(command=lambda: _do_export("xlsx"))
