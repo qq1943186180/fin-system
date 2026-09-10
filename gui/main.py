@@ -23,6 +23,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import uuid
 
 import db
+from logging_setup import get_logger
 from modules import arap, expense as expense_mod, feishu, invoice_gui, ledger, reports
 from gui.ui_theme import (
     C_BG, C_CARD, C_CARD_HOVER, C_BORDER, C_NAV, C_NAV_ACTIVE,
@@ -51,6 +52,13 @@ except Exception:
     security = None
 
 ROOT = Path(getattr(app_paths, "INSTALL_ROOT", Path(__file__).resolve().parent.parent))
+
+LOG = get_logger("gui.main")
+
+# 自动备份的固定命名：finance-<YYYYMMDD>-<HHMMSS>-<微秒>.db
+# 用正则精确匹配而非 *.db 通配，避免把迁移前备份 finance-pre-*.db 也卷进轮转被删掉
+# （那是 schema 变更的安全网，必须长期保留）。
+_BACKUP_NAME_RE = re.compile(r"^finance-(\d{8})-(\d{6})-(\d{6})\.db$")
 
 
 def _enable_dpi_awareness() -> None:
@@ -351,44 +359,130 @@ class FinanceApp:
 
     # ------------------------------------------------------------------
     # TD-4: 启动时自动备份
+    #
+    # 2026-09-10 修复两处真实缺陷（详见 docs/architecture-review-2026-09-10-followup.md §2.1）：
+    #  ① 日期匹配失效 —— 备份文件名用 %Y%m%d（finance-20260910-222249-908177.db），
+    #     而原判定用 date.isoformat()（finance-2026-09-10）做前缀，两者永不相等，
+    #     于是「每天首启备份一次」退化成「每次启动都备份」；叠加 MAX_BACKUPS=5，
+    #     同一天的多次启动就把历史备份全部滚掉（生产库实测 5 份全是同一天）。
+    #  ② 保留窗口过短 + 失败静默 —— 整个函数被 except: pass 包住，
+    #     备份失败（磁盘满 / 文件锁 / 权限）用户完全无感，属「以为有备份」型故障。
     # ------------------------------------------------------------------
-    def _run_startup_backup(self) -> None:
-        """Check if today's backup exists; if not, create one and keep N most recent."""
-        try:
-            from db import backup_database, get_conn as _db_get_conn
-            from datetime import date
+    BACKUP_KEEP_DAYS = 7      # 近 7 天：每天保留一份
+    BACKUP_KEEP_WEEKS = 4     # 第 8 ~ 35 天：每周保留一份
+    BACKUP_KEEP_MONTHS = 6    # 第 36 天 ~ 6 个月：每月保留一份
 
-            # Determine the backup directory from app_paths or fallback to DB parent.
+    def _backup_directory(self) -> Path:
+        """备份目录：优先 app_paths，回退到数据根下的 backups/。"""
+        directory = getattr(app_paths, "BACKUP_DIR", None) if app_paths else None
+        if not directory:
+            directory = Path(db.DB_PATH).resolve().parent.parent / "backups"
+        return Path(directory)
+
+    def _prune_backups(self, backup_dir: Path) -> int:
+        """分层滚动保留旧备份，返回删除份数。
+
+        保留策略：近 BACKUP_KEEP_DAYS 天逐日、之后每周、再之后每月各留最新一份。
+        只处理自动备份的固定命名；迁移前备份（finance-pre-*.db）与其它文件不参与轮转——
+        它们是 schema 变更的安全网，原实现把 *.db 一锅端计入 5 份上限会把它们一起删掉。
+        """
+        entries: list[tuple[dt.datetime, Path]] = []
+        for path in backup_dir.iterdir():
+            if not path.is_file():
+                continue
+            match = _BACKUP_NAME_RE.match(path.name)
+            if not match:
+                continue
             try:
-                import app_paths as _ap
-                backup_dir = _ap.BACKUP_DIR
-            except Exception:
-                backup_dir = Path(db.DB_PATH).resolve().parent.parent / "backups"
+                stamp = dt.datetime.strptime(match.group(1) + match.group(2), "%Y%m%d%H%M%S")
+            except ValueError:
+                continue
+            entries.append((stamp, path))
+        if not entries:
+            return 0
 
+        now = dt.datetime.now()
+        weekly_until = self.BACKUP_KEEP_DAYS + self.BACKUP_KEEP_WEEKS * 7
+        monthly_until = self.BACKUP_KEEP_DAYS + self.BACKUP_KEEP_MONTHS * 30
+        keep: set[Path] = set()
+        used_buckets: set[tuple] = set()
+        for stamp, path in sorted(entries, key=lambda item: item[0], reverse=True):
+            age_days = (now - stamp).days
+            bucket: tuple
+            if age_days < self.BACKUP_KEEP_DAYS:
+                bucket = ("day", age_days)
+            elif age_days < weekly_until:
+                bucket = ("week", age_days // 7)
+            elif age_days < monthly_until:
+                bucket = ("month", stamp.year * 12 + stamp.month)
+            else:
+                continue  # 超出保留范围：淘汰
+            if bucket in used_buckets:
+                continue  # 该时间段已有更新的一份，本份淘汰
+            used_buckets.add(bucket)
+            keep.add(path)
+
+        removed = 0
+        for _stamp, path in entries:
+            if path not in keep:
+                path.unlink(missing_ok=True)
+                removed += 1
+        return removed
+
+    def _run_startup_backup(self) -> None:
+        """每天首次启动时备份一次账套，并分层滚动保留；失败记录日志、界面可见。"""
+        self._backup_error = ""
+        try:
+            backup_dir = self._backup_directory()
             backup_dir.mkdir(parents=True, exist_ok=True)
 
-            today_str = date.today().isoformat()  # YYYY-MM-DD
-            existing_today = any(
-                f.name.startswith(f"finance-{today_str}")
-                for f in backup_dir.iterdir()
-                if f.is_file() and f.suffix == ".db"
+            today_prefix = "finance-%s-" % dt.date.today().strftime("%Y%m%d")
+            already_backed_up = any(
+                path.is_file()
+                and path.name.startswith(today_prefix)
+                and _BACKUP_NAME_RE.match(path.name)
+                for path in backup_dir.iterdir()
             )
 
-            if not existing_today:
-                backup_database()
+            created = False
+            if not already_backed_up:
+                db.backup_database()
+                created = True
 
-            # Keep the most recent N backups, delete older ones.
-            MAX_BACKUPS = 5
-            backups = sorted(
-                [f for f in backup_dir.iterdir() if f.is_file() and f.suffix == ".db"],
-                key=lambda f: f.stat().st_mtime,
-                reverse=True,
-            )
-            for old_backup in backups[MAX_BACKUPS:]:
-                old_backup.unlink(missing_ok=True)
+            removed = self._prune_backups(backup_dir)
+            if created:
+                LOG.info("启动自动备份完成，清理 %d 份过期备份", removed)
+        except Exception as exc:
+            # 备份失败绝不能阻塞启动，但也不再静默吞掉 —— 否则用户会以为「每天都备份了」。
+            self._backup_error = str(exc) or exc.__class__.__name__
+            LOG.error("启动自动备份失败：%s", exc, exc_info=True)
+
+    def _backup_status_text(self) -> str:
+        """设置页展示：自动备份份数 / 最近一次时间 / 上次启动备份是否失败。"""
+        try:
+            backup_dir = self._backup_directory()
+            stamps: list[dt.datetime] = []
+            for path in backup_dir.iterdir():
+                if not path.is_file():
+                    continue
+                match = _BACKUP_NAME_RE.match(path.name)
+                if not match:
+                    continue
+                try:
+                    stamps.append(dt.datetime.strptime(match.group(1) + match.group(2), "%Y%m%d%H%M%S"))
+                except ValueError:
+                    continue
+            if stamps:
+                text = "自动备份：%d 份 · 最近 %s（每天首次启动时备份）" % (
+                    len(stamps), max(stamps).strftime("%Y-%m-%d %H:%M"),
+                )
+            else:
+                text = "自动备份：尚无（每天首次启动时自动备份账套）"
         except Exception:
-            # Never let a backup failure prevent the app from starting.
-            pass
+            text = "自动备份：状态未知"
+        if getattr(self, "_backup_error", ""):
+            text += " · ⚠️ 最近一次启动备份失败：%s" % self._backup_error
+        return text
 
     def _configure_style(self) -> None:
         configure_dark_style(self.root)
@@ -2218,6 +2312,15 @@ class FinanceApp:
             getattr(app_paths, "BACKUP_DIR", ""), getattr(app_paths, "REPORTS_DIR", ""), getattr(app_paths, "LOG_DIR", ""),
         )
         tk.Label(operations, text=path_text, bg=C_PANEL, fg=C_TEXT_MUTED, font=FONT_SMALL, justify="left").grid(row=2, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        # 自动备份健康度：份数 / 最近一次时间 / 上次启动备份是否失败（失败时标红）
+        tk.Label(
+            operations,
+            text=self._backup_status_text(),
+            bg=C_PANEL,
+            fg=C_DANGER if getattr(self, "_backup_error", "") else C_TEXT_MUTED,
+            font=FONT_SMALL,
+            justify="left",
+        ).grid(row=3, column=0, columnspan=6, sticky="w", pady=(4, 0))
 
         # 开机自启开关
         autostart_var = tk.BooleanVar(value=app_paths.get_autostart_enabled())
@@ -2238,7 +2341,7 @@ class FinanceApp:
             command=toggle_autostart,
             bg=C_PANEL,
             font=FONT,
-        ).grid(row=3, column=0, columnspan=6, sticky="w", pady=(8, 0))
+        ).grid(row=4, column=0, columnspan=6, sticky="w", pady=(8, 0))
 
         integrations = self._panel(inner, padx=16, pady=14)
         integrations.pack(fill="x", pady=10)
