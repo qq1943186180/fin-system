@@ -204,7 +204,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Installing pinned build dependencies failed." }
 
     Write-Host "[2/6] Installing project runtime dependencies..."
-    & $BuildPython -m pip install --disable-pip-version-check --no-input "imap_tools" "pystray"
+    & $BuildPython -m pip install --disable-pip-version-check --no-input "imap_tools" "pystray" "openpyxl" "fpdf2"
     if ($LASTEXITCODE -ne 0) { throw "Installing project runtime dependencies failed." }
 
     Write-Host "[3/6] Building the relative onedir bundle..."

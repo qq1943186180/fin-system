@@ -232,24 +232,50 @@ def _write_xlsx(path: Path, sheet_name: str, headers: list[str], data: list[tupl
         return IntegrationResult(IntegrationStatus.RETRYABLE_ERROR, f"Excel 导出失败: {exc}")
 
 
+_CJK_FONT_CANDIDATES = (
+    r"C:\Windows\Fonts\simhei.ttf",
+    r"C:\Windows\Fonts\Deng.ttf",
+    r"C:\Windows\Fonts\simkai.ttf",
+    r"C:\Windows\Fonts\msyh.ttc",
+    r"C:\Windows\Fonts\simsun.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+)
+
+
+def _find_cjk_font() -> str | None:
+    """找到可用的中文字体文件；找不到返回 None。"""
+    for candidate in _CJK_FONT_CANDIDATES:
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
 def _write_pdf(path: Path, title: str, headers: list[str], data: list[tuple]) -> IntegrationResult:
     try:
         from fpdf import FPDF
         pdf = FPDF()
         pdf.add_page()
         pdf.set_auto_page_break(auto=True, margin=15)
-        # Use default built-in font (avoid Chinese font issues)
-        pdf.set_font("Helvetica", "B", 14)
+
+        # 中文字体：优先用系统自带 TTF（Helvetica 无法渲染中文）。
+        font_path = _find_cjk_font()
+        if font_path:
+            pdf.add_font("cj", "", font_path)
+            base_font = "cj"
+        else:
+            base_font = "Helvetica"  # 退化为拉丁字体（仅英文可显示）
+
+        pdf.set_font(base_font, "", 14)
         pdf.cell(0, 10, title, ln=True, align="L")
         pdf.ln(2)
 
-        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_font(base_font, "", 9)
         col_widths = _pdf_col_widths(headers)
         for h, w in zip(headers, col_widths):
             pdf.cell(w, 7, str(h), border=1, align="C")
         pdf.ln()
 
-        pdf.set_font("Helvetica", "", 9)
+        pdf.set_font(base_font, "", 9)
         for row in data:
             for value, w in zip(row, col_widths):
                 text = str(value) if value is not None else ""
