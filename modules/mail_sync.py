@@ -91,7 +91,10 @@ class MailSyncEngine:
                     if not proc_result.ok:
                         LOG.warning("[%s] 附件处理失败: %s — %s",
                                     cfg.name, att.get("filename", ""), proc_result.message)
-                        all_ok = False
+                        # 业务性拒绝（非发票 / 已入库）不算失败，不阻塞水位线推进，
+                        # 否则同一封"发票+行程单"邮件会每轮重扫、永远卡在水位线上。
+                        if proc_result.status not in (IntegrationStatus.BUSINESS_REJECTED,):
+                            all_ok = False
                 except Exception:
                     LOG.exception("[%s] 附件处理异常: %s", cfg.name, att.get("filename", ""))
                     all_ok = False
