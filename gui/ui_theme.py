@@ -147,8 +147,9 @@ def configure_light_style(root: tk.Tk) -> None:
                     arrowcolor=C_TEXT_MUTED)
 
 
-# Back-compat alias so existing code still works.
-configure_dark_style = configure_light_style
+# 2026-09-10：原先这里有一个 `configure_dark_style = configure_light_style` 的
+# "back-compat alias"。名字与实现相反（配色全是浅色），会误导维护者以为在配深色主题，
+# 进而"修"出一个**用户已明确否决**的深色界面，故删除。统一用 configure_light_style()。
 
 
 class CardFrame(tk.Canvas):

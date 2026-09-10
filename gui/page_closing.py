@@ -10,7 +10,7 @@ from modules import closing
 from gui.ui_theme import (
     C_BG, C_CARD, C_BORDER, C_TEXT, C_TEXT_MUTED, C_ACCENT, C_OK, C_DANGER,
     FONT, FONT_SMALL, FONT_B, FONT_H2, FONT_H3,
-    CardFrame, ModernButton, configure_dark_style,
+    CardFrame, ModernButton,
 )
 
 

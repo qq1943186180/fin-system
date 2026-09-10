@@ -9,7 +9,7 @@ from modules import inventory
 from gui.ui_theme import (
     C_BG, C_CARD, C_BORDER, C_TEXT, C_TEXT_MUTED, C_ACCENT, C_OK, C_DANGER,
     FONT, FONT_SMALL, FONT_B, FONT_H2, FONT_H3,
-    CardFrame, ModernButton, configure_dark_style,
+    CardFrame, ModernButton,
 )
 
 DOC_LABELS = {"purchase_in": "采购入库", "sale_out": "销售出库", "initial": "期初建账"}

@@ -34,7 +34,7 @@ from gui.ui_theme import (
     C_OK, C_OK_SOFT, C_WARN, C_WARN_SOFT, C_DANGER, C_DANGER_SOFT,
     C_INPUT_BG, C_INPUT_FG, C_INPUT_BORDER,
     FONT, FONT_SMALL, FONT_B, FONT_TITLE, FONT_H2, FONT_H3, FONT_NUM, FONT_MONO,
-    configure_dark_style,
+    configure_light_style,
     CardFrame,
     ModernButton,
     NavButton,
@@ -288,7 +288,7 @@ class FinanceApp:
             except tk.TclError:
                 pass
 
-        configure_dark_style(root)
+        configure_light_style(root)
         root.grid_rowconfigure(0, weight=1)
         root.grid_columnconfigure(1, weight=1)
 
@@ -485,7 +485,7 @@ class FinanceApp:
         return text
 
     def _configure_style(self) -> None:
-        configure_dark_style(self.root)
+        configure_light_style(self.root)
 
     def _load_company_name(self) -> None:
         try:
