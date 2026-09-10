@@ -160,30 +160,37 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 - **阶段 0–5 全部完成**：骨架 / 记账内核 / 报表 / 往来 / 报销 / 票据+飞书+邮件收票。
 - 另有**已上线的增量模块**（第 3 节目录树已含）：进销存 `inventory.py` + 期末处理 `closing.py` + 数据问题 `integration.py`，GUI 导航共 11 页。
 - 已打包 onedir **真 exe**，真机冒烟通过；UI = 浅色商务风（`clam` 主题，含表格斑马纹）。
-- **release 已随 P1/P3 一起重打包**（exe `00:07`，8.86 MB）：实测含 P1 备份修复（`_BACKUP_NAME_RE` 出现 4 次）与 P3 改名（`configure_light_style` 3 次、无 `configure_dark_style =` 别名）；`财务系统.exe --self-check` 返回 `{"ok": true}`（13 项运行时组件）。P4 的 `build.ps1` 门禁改动**不进二进制**，但同一轮构建实跑验证过。
-  - ⚠️ **P6（`1cf2be2`）改了 `modules/invoice_gui.py` / `modules/mail_processor.py`，release 尚未重打包** —— 发票归档逻辑需**重打包后才在 exe 里生效**（`build.ps1` 跑 `[6/6]` 即可，门禁会自动校验依赖一致性）。
-- ✅ **回归基线：`pytest` 130 passed**（P1 前 41 → P1 后 52 → P2/P3/P4/P5 后 111 → P6 后 130）。
+- **release 已重打包至含 P1/P3/P6/P7**（exe `01:12`，8,863,479 B；`build.ps1` 六步全过，`BUILD_EXIT=0`）。
+  - ✅ **打包验证方式已纠正**：早期记录说"grep exe 找 `_BACKUP_NAME_RE` 命中 4 次"—— **该方法无效**。PyInstaller 把字节码压进 PKG→PYZ（zlib），任何 Python 级名字都 grep 不到（对照实测：`_BACKUP_NAME_RE` / `configure_light_style` 均为 **0 次**，而它们确在包里）。现在改用 `tools/verify_release_packaging.py`：解出 PYZ，取目标模块 code object，扫 `co_name` / `co_names` / `co_varnames` / `co_consts`（含**字符串元组**，3.11 的关键字实参名藏在这里）。实测输出 `ALL_TARGET_SYMBOLS_PRESENT`，且**负对照通过**（注入假符号必被报出）。
+  - ✅ 实测含 P6：`_archive_invoice_file` / `_archive_month` / `_archive_enabled` / `_safe_name` / `invoice_archive_enabled` / `INVOICES_ARCHIVE_DIR` / `_source_filename` / `source_file` 全部命中。
+  - ✅ `manifest.sha256` 999 项，`财务系统.exe` 哈希与清单一致（`09b7332…2a3cd4`）；构建期内置自检 `exit=0`。
+  - ⚠️ `release\frozen-self-check.json`（`7/11` 那份）是**旧构建残留**——`build.ps1` 把自检报告写到临时目录，不回写发布根，故该文件不会更新。属"可选小清理"项。
+  - ℹ️ 构建工具链：本机无 `py` 启动器，3.11 宿主为 `C:\Users\li1\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\python.exe`，需 `-PythonPath` 显式传入（`build.ps1` 找不到 `py -3.11` 会直接抛错）。
+- ✅ **回归基线：`pytest` 171 passed**（P1 前 41 → P1 后 52 → P2~P5 后 111 → P6 后 130 → P7 后 164 → 打包验证器后 171）。
 - 账套实际数据：科目 46 · 凭证 13 · 往来（档案）2 · 期间 **2026-07**。
   - 补口径：凭证 13 = 已记账 11 + 草稿 1 + 待审核 1；其中有 3 条 `test data cleanup` 冲销凭证 + 1 条草稿冲销，属测试残留。
   - 往来 2 = `partner` 客户/供应商**档案** 2 条；应收应付台账 `arap_item` **0 条**。
   - 期间 2026-07 取自凭证的 `period` 字段；`period` 表本身 **0 行**（期末处理状态未初始化，不影响记账）。
 - 公司抬头：**已补齐**（`高迥（杭州）贸易有限责任公司` / `91330105MACRGYRN32` / `浙江省杭州市拱墅区东新街道东方茂商业中心1幢3层4062室`，与桌面 `执照.jpg` 一致）。
-- 发票库存：**共 6 张，账面价税合计 ¥1,436.83**（待确认 5 张 ¥1,340.00 + 待审核 1 张 ¥96.83）。
+- 发票库存：**共 6 张，账面价税合计 ¥1,461.36**（待确认 5 张 ¥1,361.62 + 待审核 1 张 ¥99.74）。
   - ✅ 6 张发票的 `file_path` / `file_hash` / 税号**已全部补齐**，原件归档于 `invoices\archive\<开票月份>\`（提交 `21ed316` 执行）。
-  - 🔴 **但价税合计口径有误**：id=6~9 的 `tax_cents` 为 0、`total_cents` 漏计进项税额，**合计少计 ¥24.53**。正确值应为 6:`608.85` / 7:`9.05` / 8:`123.76` / 9:`99.74`。其中 id=9 **已生成待审核凭证**，修正需连带处理分录。**未修，详见 §10.2。**
+  - ✅ **价税合计口径已修正**：id=6~9 的 `tax_cents` / `total_cents` 已按 `ocr_result.json` 票面真值补齐（原少计 ¥24.53），id=9 关联的凭证 15 同步调整至 99.74（提交 `26f2fb5` 执行）。详见 §10.2。
 - 邮箱：163 **已启用**（水位线 `last_uid=1691478373`）；QQ 已禁用。
 
 ---
 
 ## 10. 待办 / 明确不做
 
-- [ ] **「全部补收进来」**：163 历史发票补收（约 60 封）—— 前置修复已就绪，**尚未执行**（会真实连邮箱、真实写库）。
+- [ ] **「全部补收进来」**：163 历史发票补收（约 60 封）—— **尚未执行**（会真实连邮箱、真实写库）。
+  - ✅ 前置条件**已全部就绪**：原件归档（P6）+ 金额三件套口径（P7）+ 关联回补工具（P5）均已修好并进 exe，新收的发票不会再出现 `file_path` 空 / 税额丢 / 归档缺失。
+  - ⚠️ 执行前建议：先 `--dry-run` 级别地跑一小批（如 3~5 封）确认外部 OCR agent 与归档链路在真机上正常，再放全量。
 - [x] ✅ **P1 备份缺陷（已修复，提交 `3d27438`）**：原 `gui/main.py` `_run_startup_backup()` 有两处真实缺陷 —— ①「今天是否已备份」用 `date.today().isoformat()`（`finance-2026-09-10`）去匹配备份文件名 `finance-20260910-...` 的 `%Y%m%d` 前缀，**永不相等**，使「每天首启一次」退化成「每次启动都备份」，叠加 `MAX_BACKUPS=5` 后同一天的多次启动把历史全滚掉（**生产库实测 5 份全是 9/10 同一天，等于实际没有保留策略**）；②整函数 `except Exception: pass`，备份失败用户无感。现已改为：正则精确匹配自动备份命名（迁移前备份不参与轮转）+ 分层保留（7 日 / 4 周 / 6 月，超期才淘汰）+ 失败记 `LOG.error` 并在设置页标红。详见 `docs/architecture-review-2026-09-10-followup.md` §2.1。
 - [x] ✅ **P2 `.gitignore` 纵深防御缺口（已修复，提交 `d75c8d2`）**：原只忽略 `config/feishu.json`，而 `config/credentials.json`（全部密钥的仓库）／`config/settings.json`／`config/*.blob` **都不被忽略**（`git check-ignore` 实测）。已改为按类型覆盖 `config/*.json` + `config/*.blob` + `!config/feishu.example.json` + `db/*.db`——**以后新增的配置文件默认安全**。注意规则写 `config/*.json` 而非 `config/`：忽略整个目录会让 `!` 放行规则失效。回归测试 `tests/test_repo_hygiene.py`（10 例，真实调用 `git check-ignore`）；旧规则下 5 例失败，新规则全绿。
 - [x] ✅ **P3 `configure_dark_style` 命名与实现相反（已修复，提交 `1051a1b`）**：该别名实为 `configure_light_style`（`gui/ui_theme.py:151`），配色全浅色，会误导后人去「修」成深色（而深色风已明确否决）。已删除别名并把 `gui/main.py` 两处调用点、三个页面里未使用的 import 全部改名。回归测试 `tests/test_ui_theme.py`（13 例，含真实 Tk 断言实际生效主题为 `clam`）；把主题优先级改成 `vista` 优先可复现失败。
 - [x] ✅ **P4 依赖三处手工同步（已修复，提交 `1039b2c`）**：`pyproject.toml` / `build.ps1` / `spec.hiddenimports` 三处靠人脑同步，而 PyInstaller 对缺失 hiddenimport 只发 WARNING → exe 静默缺库（openpyxl / fpdf2 导出报表时已真实发生）。已在 `build.ps1` `[2/6]` 装包后新增 `Assert-DependencyParity` 门禁：脚本清单 vs pyproject、每个声明项必须在 spec hiddenimports 里、每个包必须真实可 import，命中漂移即中止构建。pip 名/import 名映射（`fpdf2`→`fpdf`）集中到一处。回归测试 `tests/test_dependency_parity.py`（8 例）；实跑构建输出 `dependency parity OK: imap_tools, pystray, openpyxl, fpdf`。
 - [x] ✅ **P5 业务数据回补（已对生产库执行，提交 `21ed316`，执行于 2026-09-11 00:44）**：详见下方 §10.1。
 - [x] ✅ **P6 发票原件归档 + `file_path` 落地 + 金额口径纠正（已修复，提交 `1cf2be2`）**：`invoice_doc.file_path` 恒为空的根因已修 —— 外部 agent `summarize()` 补齐 `file_path`/税号/金额三件套，财务系统入库时把原件归档进自己的数据根，`load_invoices` 对缺路径行记 WARNING。回归 `tests/test_invoice_archive.py`（18 例）。详见 §10.2。
+- [x] ✅ **P7 历史金额口径修正（已对生产库执行，提交 `26f2fb5`，执行于 2026-09-11 01:05）**：`summarize()` 早年让 `金额` 字段兼职两种含义且 key 名与下游不匹配，导致进项税静默归零、4 张发票价税合计少计 ¥24.53，其中 id=9 的凭证亦连带少记应付。已按确认口径（3% 电子普票、不可抵扣、全额入成本）修正台账与凭证。工具 `tools/fix_invoice_amounts.py`（默认只读）+ 回归 `tests/test_fix_invoice_amounts.py`（34 例）。详见 §10.2。
 - [ ] 测试残留数据清理：`invoices\failed\` 6 个 PDF（含 3 个 `failed_invoice_*.pdf` 早期样本，25 字节占位符）、3 条 `test data cleanup` 冲销凭证。**清理前先确认清单。**（回补工具已把 3 个 25 字节占位符自动识别并忽略。）
 - [ ] 可选小清理：`config/feishu.app_secret.blob`（旧版孤儿文件，当前代码无 `.blob` 读写）、`release/frozen-self-check.json`（7/11 旧文件）、`settings.json` 与 `feishu.json` 里重复的飞书配置段。
 - ℹ️ `partner.type` 中英混用（中文「客户」+ 英文 `supplier`）：**代码已用 `type IN (?,?)` 兼容，非 bug**，新数据由 `add_partner` 自动归一化。可不处理。
@@ -278,7 +285,7 @@ python tools/backfill_business_data.py \
 价税合计缺失时用「不含税 + 税额」兜底）。
 
 
-### 10.2 P6 根因修复（✅ 已完成）+ 待决策的历史金额修正（🔴 未做）
+### 10.2 P6 根因修复 + P7 历史金额修正（✅ 均已完成）
 
 #### 已完成（提交 `1cf2be2`）
 
@@ -296,37 +303,41 @@ python tools/backfill_business_data.py \
 > ⚠️ `logging_setup` 里 `logger.propagate = False`，故 `caplog` 抓不到这些告警，
 > 测试改为直接断言 `LOG.warning` 调用；日志本身正常写入 `logs\` 下文件。
 
-#### 🔴 待你决策：id=6~9 的历史金额修正
+#### ✅ P7 已执行：id=6~9 的历史金额修正（提交 `26f2fb5`）
 
-新发现的数据错误，**不在原 P6 三步范围内**，故未擅自写库：
+口径已确认：滴滴开的是 **3% 增值税电子普通发票**，进项税**不可抵扣** → 成本费用按
+**价税合计全额**入账（**台账 ≠ 分录**：`invoice_doc.tax_cents` 仍如实记录票面税额，
+但凭证不拆 `2221`，而是把原金额整体抬到价税合计）。
 
-| id | 发票号码 | 现值 net/tax/total | 票面真值（`ocr_result.json` 硬证据） | 偏差 |
-|---|---|---|---|---|
-| 6 | 26337000000663360916 | 591.11 / 0 / 591.11 | 591.11 / **17.74** / **608.85** | 少计 17.74 |
-| 7 | 26447000001378352112 | 8.78 / 0 / 8.78 | 8.78 / **0.27** / **9.05** | 少计 0.27 |
-| 8 | 26217000000285335773 | 120.15 / 0 / 120.15 | 120.15 / **3.61** / **123.76** | 少计 3.61 |
-| 9 | 26117000001021765684 | 96.83 / 0 / 96.83 | 96.83 / **2.91** / **99.74** | 少计 2.91 |
+| id | 发票号码 | 修正前 net/tax/total | 修正后 net/tax/total | 凭证处理 | 补计 |
+|---|---|---|---|---|---|
+| 6 | 26337000000663360916 | 591.11 / 0 / 591.11 | 591.11 / **17.74** / **608.85** | 无凭证，仅台账 | ¥17.74 |
+| 7 | 26447000001378352112 | 8.78 / 0 / 8.78 | 8.78 / **0.27** / **9.05** | 无凭证，仅台账 | ¥0.27 |
+| 8 | 26217000000285335773 | 120.15 / 0 / 120.15 | 120.15 / **3.61** / **123.76** | 无凭证，仅台账 | ¥3.61 |
+| 9 | 26117000001021765684 | 96.83 / 0 / 96.83 | 96.83 / **2.91** / **99.74** | voucher 15 同步：`借 5602` / `贷 2202` 均 96.83 → **99.74** | ¥2.91 |
 
-口径自证：四张票的 `不含税 / 价税合计` 均 ≈ `0.9709`（即 3% 征收率），与 OCR 抽出的
-`金额合计`/`税额合计` 完全吻合 —— 证实 `金额合计` 是不含税值、进项税被静默丢弃。
+合计补计价税 **¥24.53**。
 
-**影响面差异**：
+工具：`tools/fix_invoice_amounts.py`（**默认只读**，`--apply` 才写）。
 
-- id=**6/7/8 未入账**（`status=待确认`，无凭证）→ 只改 `invoice_doc` 三个金额列，低风险。
-- id=**9 已生成凭证 15**（`status=待审核`、**未记账**、`posted_at=None`）→ 分录为
-  `借 5602 成本 96.83 / 贷 2202 应付 96.83`，**应付账款同样少记 2.91**（实付 99.74）。
-  修正必须连带处理分录，否则账实不符。
+| 安全层 | 做法 |
+|---|---|
+| 真值来源 | 只认 `invoice-agent/results/ocr_result.json` 的票面三件套；`不含税 + 税额 ≠ 价税合计` 时整条丢弃 |
+| 动手门槛 | **仅**当 `tax_cents == 0 && total_cents == net_amount_cents` 且不含税与票面一致；其它形态一律**报冲突、不猜** |
+| 凭证拒绝 | 非「一借一贷」/ 含 `2221` / 已 `posted` / 分录金额与发票原额不符 → 全部拒绝并报告 |
+| 备份 | SQLite **在线备份 API**（WAL 下 `copy2` 不可靠）+ `integrity_check` + 5 张关键表行数校验 |
+| 事务 | `BEGIN IMMEDIATE` + 写前 TOCTOU 复核 + 改后借贷自校验；任一步失败**整体回滚** |
+| 留痕 | 每处改动一条 append-only `audit_event`（含前后值、证据来源、`tool` 名不混用） |
+| 幂等 | 现值已等于真值 → 跳过；复跑输出 `[无需处理]` |
 
-**待你确认的会计口径**（决定怎么修）：
+执行证据（生产库）：备份 `finance.db.fixamounts-20260911-010500.bak`（240 KB）；
+`audit_event` id **43~47**；`voucher 15` 调整后借贷 **9974 = 9974**；全库无失衡凭证。
+独立复核：`pytest -q` → **164 passed**；工具复跑 → `[无需处理]`（已收敛）。
 
-- 滴滴开的是**增值税电子普通发票**（3% 征收率）。若按普票处理 → **不可抵扣进项税**，
-  成本费用按**价税合计**全额入账，即凭证金额由 `591.11` 改为 `608.85`（借贷同增）；
-  `invoice_doc` 的 `tax_cents` 仍应如实记录票面 `17.74`（**台账 ≠ 分录**）。
-- 若你实际取得的是**可抵扣凭证** → 分录需拆
-  `借 5602 (不含税) / 借 2221 应交税费—应交增值税(进项税额) / 贷 2202 (价税合计)`。
-
-请告知走哪一种。我会照 P5 同一套安全姿势执行（只读先出方案 → 自动备份 →
-三层防覆盖 → 写 `audit_event` 留痕 → 复核）并单独提交。
+> 🔴 新增踩坑（已写入技能）：`summarize()` 早年让 `金额` 字段**兼职两种含义**
+> （`价税合计 or 金额合计`），且 summary 写 `税额`、下游却找 `税额合计` —— key 名不匹配
+> 让进项税**静默归零**。教训：一个字段只承载一种含义；跨模块字段名必须对齐，
+> 金额类字段一律用「三件套 + 自校验（不含税+税额=价税合计）」兜底。
 
 ---
 
@@ -358,7 +369,10 @@ python tools/backfill_business_data.py \
 | 改邮箱/公司配置 | `%LOCALAPPDATA%\FinanceSystem\config\settings.json` |
 | 看运行日志 | `%LOCALAPPDATA%\FinanceSystem\logs\` |
 | 重试失败发票 | 程序里「票据」页的重试入口（源文件在 `invoices\failed\`） |
-| 重新打包 | `build.ps1` |
+| 重新打包 | `build.ps1 -PythonPath "C:\Users\li1\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\python.exe"` |
+| **验证 exe 里是否含某改动** | `tools/verify_release_packaging.py <exe> <临时目录>`（**别用 grep**，PYZ 是压缩的） |
+| 回补发票原件关联 / 公司抬头 | `tools/backfill_business_data.py`（默认只读，`--apply` 才写） |
+| 修正发票金额口径 | `tools/fix_invoice_amounts.py`（默认只读，`--apply` 才写） |
 | 跑测试 | `tests/` + `tools/acceptance_check.py` |
 | 了解全部设计/坑 | 技能 `sme-finance-desktop`（Hermes） |
 
@@ -434,10 +448,10 @@ python tools/backfill_business_data.py \
 | 6 | 配置双份：`settings.json` 的 `feishu` 段与 `feishu.json` 重复 | ⬜ 明确单一来源（`feishu.json` 为主） |
 | 7 | ~~**根因未修**：`summarize()` 丢字段 → 新收发票 `file_path` 依旧为空~~ | ✅ **已修**（`1cf2be2`，①~⑤ 全部落地 + 18 例回归） |
 | 8 | ~~财务系统**没有"成功归档"目录**，OCR 成功的 PDF 从未落盘~~ | ✅ **已修**（`1cf2be2`，新增 `invoices\archive\<月份>\` 并在入库时归档） |
-| 9 | 🔴 **新发现**：id=6~9 的 `tax_cents`/`total_cents` 漏计进项税（合计 ¥24.53）；id=9 已生成待审核凭证、应付账款同样少记 2.91 | 🔴 **未修**，会计口径待确认，见 §10.2 |
-| 10 | ⚠️ `release\财务系统\` 仍是 P1/P3 时的构建，**不含 P6 归档逻辑** | ⚠️ 待重打包（P6 改了 `invoice_gui.py`/`mail_processor.py`） |
+| 9 | ~~🔴 **新发现**：id=6~9 的 `tax_cents`/`total_cents` 漏计进项税（合计 ¥24.53）；id=9 已生成待审核凭证、应付账款同样少记 2.91~~ | ✅ **已修**（`26f2fb5` 工具已执行：4 张台账 + 凭证 15，二审借贷平衡，见 §10.2） |
+| 10 | ~~⚠️ `release\财务系统\` 仍是 P1/P3 时的构建，**不含 P6 归档逻辑**~~ | ✅ **已重打包**（`01:12`，`build.ps1` 六步全过；拆包实测 P6 符号全命中，见第 9 节） |
 
-**P5/P6 实机复核（2026-09-11）**：
+**P5/P6/P7 实机复核（2026-09-11）**：
 
 | 核验项 | 实测 | 结论 |
 |---|---|---|
@@ -451,5 +465,15 @@ python tools/backfill_business_data.py \
 | P6 归档不阻断 | 归档失败降级沿用原路径（开关 + 异常路径均有用例覆盖） | ✅ |
 | P6 原件保全 | 邮件链临时文件删除前已复制归档（端到端用例断言目标文件存在） | ✅ |
 | P6 变异验证 | 移除归档调用或 `source_file` 传递 → 4 例失败；还原后 18 例全绿 | ✅ |
-| P6 全量回归 | `pytest tests -q` → **130 passed** | ✅ |
+| **P7 写库已执行** | 4 张发票 `tax_cents`/`total_cents` 按票面真值补齐：6→60885 / 7→905 / 8→12376 / 9→9974 | ✅ |
+| **P7 凭证同步** | voucher 15：`借 5602` 与 `贷 2202` 均 9683 → **9974**，借贷平衡 9974 = 9974 | ✅ |
+| **P7 全库平衡** | `HAVING SUM(debit_cents) <> SUM(credit_cents)` → 无失衡凭证 | ✅ |
+| **P7 审计留痕** | `audit_event` id 43–47：5 条（4 台账 + 1 凭证），含前后值与证据来源 | ✅ |
+| **P7 备份可恢复** | `finance.db.fixamounts-20260911-010500.bak`（在线备份 API + `integrity_check` + 5 表行数校验） | ✅ |
+| **P7 幂等** | 复跑 dry-run → `[无需处理]`，无二次写入 | ✅ |
+| **P7 变异验证** | 去掉"缺陷形态门槛" / "已记账拒绝" / "2221 拒绝" → 对应用例失败 | ✅ |
+| **重打包** | `build.ps1` 六步全过 `BUILD_EXIT=0`；exe `01:12` / 8,863,479 B | ✅ |
+| **打包内容验证** | PYZ 解包：P6 全部符号命中（`_archive_invoice_file` 等）；负对照注入假符号必被报出 | ✅ |
+| **发布完整性** | `manifest.sha256` 999 项；exe 哈希 `09b7332…2a3cd4` 与清单一致 | ✅ |
+| **全量回归** | `pytest tests -q` → **171 passed**（130 → +34 P7 → +7 打包验证器） | ✅ |
 
