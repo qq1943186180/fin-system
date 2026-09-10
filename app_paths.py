@@ -49,6 +49,8 @@ DB_PATH = DB_DIR / "finance.db"
 REPORTS_DIR = APP_DATA_ROOT / "reports"
 INVOICES_DIR = APP_DATA_ROOT / "invoices"
 INVOICES_FAILED_DIR = APP_DATA_ROOT / "invoices" / "failed"
+# 入库成功后的发票原件留存目录：<archive>/<开票月份>/<发票号>_<原名>
+INVOICES_ARCHIVE_DIR = APP_DATA_ROOT / "invoices" / "archive"
 LOG_DIR = APP_DATA_ROOT / "logs"
 BACKUP_DIR = APP_DATA_ROOT / "backups"
 CONFIG_DIR = APP_DATA_ROOT / "config"
@@ -83,6 +85,7 @@ def ensure_app_dirs() -> AppPaths:
         REPORTS_DIR,
         INVOICES_DIR,
         INVOICES_FAILED_DIR,
+        INVOICES_ARCHIVE_DIR,
         LOG_DIR,
         BACKUP_DIR,
         CONFIG_DIR,

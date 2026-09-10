@@ -119,11 +119,12 @@ def _process_attachment_impl(
                 ocr_data = ocr_out if isinstance(ocr_out, dict) else {"raw": stdout}
             ocr_data["_mail_filename"] = filename
 
-        # 调用现有 register_invoice 入库
+        # 调用现有 register_invoice 入库；临时文件此刻仍存在，作为原件来源归档留存
         from modules.invoice_gui import register_invoice
 
         # register_invoice 期望 dict；传入 OCR 数据
-        reg_result = register_invoice(ocr_data)
+        ocr_data.setdefault("_source_filename", filename)
+        reg_result = register_invoice(ocr_data, source_file=tmp_path)
         if not reg_result.ok:
             return reg_result
 

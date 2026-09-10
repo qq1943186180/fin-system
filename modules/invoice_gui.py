@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from typing import Any
@@ -24,15 +25,17 @@ from modules import ledger
 from modules.integration import IntegrationResult, IntegrationStatus
 
 try:
-    from app_paths import CONFIG_DIR, INVOICES_DIR, ensure_app_dirs
+    from app_paths import CONFIG_DIR, INVOICES_ARCHIVE_DIR, INVOICES_DIR, ensure_app_dirs
 except ImportError:  # developer checkout before packaging helpers are installed
     _ROOT = Path(__file__).resolve().parents[1]
     CONFIG_DIR = _ROOT / "config"
     INVOICES_DIR = _ROOT / "data" / "invoices"
+    INVOICES_ARCHIVE_DIR = INVOICES_DIR / "archive"
 
     def ensure_app_dirs():
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         INVOICES_DIR.mkdir(parents=True, exist_ok=True)
+        INVOICES_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 try:
@@ -148,7 +151,17 @@ def load_invoices(summary_path: str | os.PathLike | None) -> list[dict]:
         rows = data.get("invoices", data.get("rows", []))
     else:
         rows = data
-    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    missing = [row for row in rows if not _text(row, "file_path", "file")]
+    if missing:
+        LOG.warning(
+            "summary 中 %d/%d 行缺少发票原件路径（file_path/file）：这些发票入库后"
+            "无法回溯原件，请检查发票识别程序的 summarize 输出。首个缺失行: 发票号码=%s",
+            len(missing),
+            len(rows),
+            _text(missing[0], "发票号码", "invoice_no") or "(未知)",
+        )
+    return rows
 
 
 def _text(inv: dict, *keys: str) -> str:
@@ -195,6 +208,74 @@ def _file_hash(path: str | os.PathLike | None) -> str:
     return digest.hexdigest()
 
 
+ARCHIVE_ENABLED_SETTING = "invoice_archive_enabled"
+
+
+def _archive_enabled() -> bool:
+    value = _settings().get(ARCHIVE_ENABLED_SETTING)
+    return True if value is None else bool(value)
+
+
+def _archive_month(date_iso: str) -> str:
+    match = re.match(r"(\d{4})-(\d{1,2})", str(date_iso or ""))
+    return "%s-%02d" % (match.group(1), int(match.group(2))) if match else "unknown"
+
+
+def _safe_name(name: str) -> str:
+    cleaned = re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", str(name)).strip(" .")
+    return cleaned or "invoice"
+
+
+def _archive_invoice_file(
+    source: str | os.PathLike | None,
+    invoice_no: str,
+    date_iso: str,
+    display_name: str | None = None,
+) -> str:
+    """Copy the invoice original into ``<app data>/invoices/archive/<月份>/``.
+
+    Returns the archived path, or the original path when archiving is disabled or
+    impossible.  Archiving never raises: a failure downgrades to the source path
+    so that bookkeeping is not blocked by filesystem problems.
+    """
+    raw = str(source or "").strip()
+    if not raw:
+        return ""
+    src = Path(raw)
+    if not src.is_file():
+        return raw
+    if not _archive_enabled():
+        return str(src)
+    try:
+        archive_root = Path(INVOICES_ARCHIVE_DIR).resolve()
+        resolved = src.resolve()
+    except OSError:
+        archive_root, resolved = Path(INVOICES_ARCHIVE_DIR), src
+    if archive_root == resolved.parent or archive_root in resolved.parents:
+        return str(resolved)
+    target_dir = archive_root / _archive_month(date_iso)
+    original = _safe_name(display_name) if display_name else _safe_name(src.name)
+    target = target_dir / ("%s_%s" % (_safe_name(invoice_no), original))
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            if _file_hash(target) == _file_hash(src):
+                return str(target)
+            stem, suffix = target.stem, target.suffix
+            for index in range(2, 100):
+                candidate = target_dir / ("%s(%d)%s" % (stem, index, suffix))
+                if not candidate.exists():
+                    target = candidate
+                    break
+            else:
+                return str(src)
+        shutil.copy2(src, target)
+        return str(target)
+    except OSError as exc:
+        LOG.warning("发票原件归档失败，沿用原路径: %s", type(exc).__name__)
+        return str(src)
+
+
 def normalize_invoice(inv: dict, source_file: str | os.PathLike | None = None) -> dict:
     invoice_no = _text(inv, "发票号码", "invoice_no", "code")
     seller_tax_no = _text(inv, "销售方税号", "seller_tax_no")
@@ -212,10 +293,15 @@ def normalize_invoice(inv: dict, source_file: str | os.PathLike | None = None) -
         net = total - tax
     if total <= 0 or net < 0 or tax < 0 or net + tax != total:
         raise ValueError("金额、税额与价税合计不一致")
-    file_path = str(source_file or inv.get("file_path") or inv.get("file") or "")
+    date_iso = _date(date_raw)
+    raw_file = str(source_file or inv.get("file_path") or inv.get("file") or "")
+    display_name = _text(inv, "_source_filename", "_mail_filename") or None
+    file_path = (
+        _archive_invoice_file(raw_file, invoice_no, date_iso, display_name) or raw_file
+    )
     return {
         "invoice_no": invoice_no,
-        "date": _date(date_raw),
+        "date": date_iso,
         "seller": _text(inv, "销售方名称", "销售方", "seller", "name"),
         "seller_tax_no": seller_tax_no,
         "buyer": _text(inv, "购买方名称", "购买方", "buyer"),
