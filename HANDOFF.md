@@ -155,7 +155,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 
 ---
 
-## 9. 当前状态（截至 2026-09-10，均已实测）
+## 9. 当前状态（截至 2026-09-11 02:34，均已实测）
 
 - **阶段 0–5 全部完成**：骨架 / 记账内核 / 报表 / 往来 / 报销 / 票据+飞书+邮件收票。
 - 另有**已上线的增量模块**（第 3 节目录树已含）：进销存 `inventory.py` + 期末处理 `closing.py` + 数据问题 `integration.py`，GUI 导航共 11 页。
@@ -164,11 +164,12 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
   - ✅ **打包验证方式已纠正**：早期记录说"grep exe 找 `_BACKUP_NAME_RE` 命中 4 次"—— **该方法无效**。PyInstaller 把字节码压进 PKG→PYZ（zlib），任何 Python 级名字都 grep 不到（对照实测：`_BACKUP_NAME_RE` / `configure_light_style` 均为 **0 次**，而它们确在包里）。现在改用 `tools/verify_release_packaging.py`：解出 PYZ，取目标模块 code object，扫 `co_name` / `co_names` / `co_varnames` / `co_consts`（含**字符串元组**，3.11 的关键字实参名藏在这里）。实测输出 `ALL_TARGET_SYMBOLS_PRESENT`，且**负对照通过**（注入假符号必被报出）。
   - ✅ 实测含 P6：`_archive_invoice_file` / `_archive_month` / `_archive_enabled` / `_safe_name` / `invoice_archive_enabled` / `INVOICES_ARCHIVE_DIR` / `_source_filename` / `source_file` 全部命中。
   - ✅ `manifest.sha256` 999 项，`财务系统.exe` 哈希与清单一致（`09b7332…2a3cd4`）；构建期内置自检 `exit=0`。
-  - ⚠️ `release\frozen-self-check.json`（`7/11` 那份）是**旧构建残留**——`build.ps1` 把自检报告写到临时目录，不回写发布根，故该文件不会更新。属"可选小清理"项。
+  - ⚠️ `release\frozen-self-check.json`（`7/11` 那份）是**旧构建残留**——`build.ps1` 把自检报告写到临时目录，不回写发布根，故该文件不会更新。**已于 2026-09-11 清入隔离区**（见 §11 残留清理）。
   - ℹ️ 构建工具链：本机无 `py` 启动器，3.11 宿主为 `C:\Users\li1\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\python.exe`，需 `-PythonPath` 显式传入（`build.ps1` 找不到 `py -3.11` 会直接抛错）。
 - ✅ **回归基线：`pytest` 171 passed**（P1 前 41 → P1 后 52 → P2~P5 后 111 → P6 后 130 → P7 后 164 → 打包验证器后 171）。
-- 账套实际数据：科目 46 · 凭证 13 · 往来（档案）2 · 期间 **2026-07**。
-  - 补口径：凭证 13 = 已记账 11 + 草稿 1 + 待审核 1；其中有 3 条 `test data cleanup` 冲销凭证 + 1 条草稿冲销，属测试残留。
+- 账套实际数据：科目 46 · 凭证 **12** · 往来（档案）2 · 期间 **2026-07**。
+  - 补口径：凭证 12 = 已记账 **11** + 待审核 1；其中有 3 条 `test data cleanup` 冲销凭证，属**有意保留**的测试残留（已记账、与凭证 5/6/7 两两对冲，账平）。
+  - **2026-09-11 02:34 删除了 1 条废弃草稿**：`voucher` id 11「冲销 2026-07-0001：123」（冲销真实的股东投资 ¥200,000，从未记账，纯残留）。13 → 12，`posted` 11 张未变、借贷平衡未变、发票台账未变；审计 `audit_event` id 105 `voucher_draft_deleted`；备份 `backups\finance-delvoucher11-20260911-023402.db`。
   - 往来 2 = `partner` 客户/供应商**档案** 2 条；应收应付台账 `arap_item` **0 条**。
   - 期间 2026-07 取自凭证的 `period` 字段；`period` 表本身 **0 行**（期末处理状态未初始化，不影响记账）。
 - 公司抬头：**已补齐且已逐字复核**（`2026-09-11` 重新读取桌面 `执照.jpg`，与库内 `company` 表 1 行**完全一致**）：
@@ -199,7 +200,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
   - ✅ **P9（OCR 缺陷）先修，再全量补收**：改外部 `ocr_invoice.py` 用**坐标锚点**替代「文本流顺序」，
     发票类可入库率 34/72(47%) → **64/72**，真发票 **64/64 = 100%**，买卖方错配 **0**。
   - ✅ 全量结果：49 封邮件 / 新入库 **49 张** / 失败 **0** / 台账 14 → **63 张** / 价税合计 **¥13,745.20** /
-    凭证 **13 张不变**（只写台账不影响账务）/ 审计 `invoice_backfilled` 累计 57 条。
+    凭证 **13 → 12 张**（补收本身只写台账不影响账务，13 张未变；**13 → 12 与补收无关**，是 2026-09-11 02:34 单独删除 id 11 废弃草稿所致，见 §10 首条）/ 审计 `invoice_backfilled` 累计 57 条。
   - 工具：`tools/backfill_history_invoices.py`（默认只读 + OCR 预筛）、`tools/audit_history_invoice_ocr.py`（质量体检）。
 - [x] ✅ **P9：修外部 OCR 的「乱序文本层」抽取缺陷 —— 已完成（2026-09-11）**，详见 §10.3 §六。
   改 `C:/Users/li1/invoice-agent/ocr_invoice.py`（改动前备份 `ocr_invoice.py.bak-20260911-015923`）：
@@ -214,8 +215,12 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 - [x] ✅ **P5 业务数据回补（已对生产库执行，提交 `21ed316`，执行于 2026-09-11 00:44）**：详见下方 §10.1。
 - [x] ✅ **P6 发票原件归档 + `file_path` 落地 + 金额口径纠正（已修复，提交 `1cf2be2`）**：`invoice_doc.file_path` 恒为空的根因已修 —— 外部 agent `summarize()` 补齐 `file_path`/税号/金额三件套，财务系统入库时把原件归档进自己的数据根，`load_invoices` 对缺路径行记 WARNING。回归 `tests/test_invoice_archive.py`（18 例）。详见 §10.2。
 - [x] ✅ **P7 历史金额口径修正（已对生产库执行，提交 `26f2fb5`，执行于 2026-09-11 01:05）**：`summarize()` 早年让 `金额` 字段兼职两种含义且 key 名与下游不匹配，导致进项税静默归零、4 张发票价税合计少计 ¥24.53，其中 id=9 的凭证亦连带少记应付。已按确认口径（3% 电子普票、不可抵扣、全额入成本）修正台账与凭证。工具 `tools/fix_invoice_amounts.py`（默认只读）+ 回归 `tests/test_fix_invoice_amounts.py`（34 例）。详见 §10.2。
-- [ ] 测试残留数据清理：`invoices\failed\` 6 个 PDF（含 3 个 `failed_invoice_*.pdf` 早期样本，25 字节占位符）、3 条 `test data cleanup` 冲销凭证。**清理前先确认清单。**（回补工具已把 3 个 25 字节占位符自动识别并忽略。）
-- [ ] 可选小清理：`config/feishu.app_secret.blob`（旧版孤儿文件，当前代码无 `.blob` 读写）、`release/frozen-self-check.json`（7/11 旧文件）、`settings.json` 与 `feishu.json` 里重复的飞书配置段。
+- [x] ✅ **测试残留清理 —— 已执行（2026-09-11 02:30~02:34），详见 §11 残留清理**。
+  - 文件类 **10 个已移入可逆隔离区**（`invoices\failed\` 6 + `archive\2026-09\` 孤儿副本 2 + `release\frozen-self-check.json` + `config\feishu.app_secret.blob`），**未删除**，带 `manifest.json` + SHA256，可整体还原。
+  - 凭证类：`voucher` id 11（废弃草稿）**已删除**；3 条 `test data cleanup` 冲销凭证（12/13/14）**有意保留** —— 它们是 `posted`，DB 触发器硬拦（`posted voucher is immutable`），且与 5/6/7 两两对冲，**只删冲销项会让测试费用复活进账（¥1,164.88）**。
+  - ⚠️ 同时纠正一处误判：`archive\2026-09\` 里**带 epoch 后缀**的文件才是台账 `file_path` 指向的正本（id 10/11），无后缀的是回填孤儿 —— 方向与早前记录相反。
+- [x] ✅ **可选小清理 —— 已执行（2026-09-11 02:30）**：`config/feishu.app_secret.blob`（已核 `security.py` 只读写 `credentials.json`）、`release/frozen-self-check.json` 均已清入隔离区。
+- ℹ️ 未处理（低优先）：飞书配置**分散在三处**且都在生效代码路径上 —— `modules/feishu.py` 先读安装根 `config/feishu.json`（`_legacy_config()`）→ 再读数据根 `config/feishu.json` → 最后把 `settings.json` 的 `feishu` 段 **merge 覆盖**上去（`modules/feishu.py:63/80/89`）；GUI 只写 `settings.json`。即 **`settings.json` 优先级最高，是实际生效值**。去重需先确认调用路径与优先级，**收益低风险高，暂不动**。
 - ℹ️ `partner.type` 中英混用（中文「客户」+ 英文 `supplier`）：**代码已用 `type IN (?,?)` 兼容，非 bug**，新数据由 `add_partner` 自动归一化。可不处理。
 - ❌ 报税/税务申报：明确**不做**。
 - ❌ 多账套切换：明确**不做**（单公司账套）。
@@ -397,7 +402,7 @@ python tools/backfill_business_data.py \
 | 预筛跳过 | 7 个行程单/结算单（辅助凭证，不送 OCR、**不产生 `invoices/failed/` 占位文件**） |
 | 发票总数 | 6 → **14 张**；价税合计 ¥1,461.36 → **¥2,672.42** |
 | 归档 | `invoices\archive\2024-06\`（2）+ `2024-09\`（6），命名 `<20位票号>_<原名>` |
-| 凭证 | **13 张不变** —— 只写发票台账（`status='待确认'`），**不自动生成凭证、不影响账务** |
+| 凭证 | **13 张不变** —— 只写发票台账（`status='待确认'`），**不自动生成凭证、不影响账务**（注：`13` 为本次操作**当时**的凭证数；2026-09-11 02:34 删除废弃草稿 id 11 后现为 **12**，与补收无关，见 §11.2） |
 | 留痕 | `audit_event` id **48~55**（`invoice_backfilled`，含 mail_uid/主题/附件名/票号） |
 | 独立复核 | 8 张票**购买方全部为「高迥（杭州）贸易有限责任公司」+ 正确税号**；净额+税额=价税合计自洽 |
 
@@ -525,7 +530,7 @@ python tools/backfill_business_data.py \
 | 预筛跳过 | 45（行程单/结算单/结账单等辅助凭证，**不产生 `failed` 占位文件**） |
 | 失败 | **0** |
 | 台账规模 | 14 → **63 张**；价税合计 ¥2,672.42 → **¥13,745.20** |
-| 凭证 | **13 张不变**（补收只写发票台账，**不生成凭证、不影响账务**） |
+| 凭证 | **13 张不变**（补收只写发票台账，**不生成凭证、不影响账务**）（注：`13` 为本次操作**当时**的凭证数；02:34 删除废弃草稿 id 11 后现为 **12**，与补收无关，见 §11.2） |
 | 审计 | `invoice_backfilled` 累计 **57 条**（id 48~55 试收 + 本次 49 条） |
 | 覆盖期间 | 2023-11 ~ 2026-09（10 个月度） |
 
@@ -551,6 +556,67 @@ python tools/backfill_business_data.py \
 
 - 邮箱密码/授权码、飞书 secret —— **只经 DPAPI 加密**存 `credentials.json`，**绝不落明文、绝不进仓库/二进制**。
 - `config/feishu.json`、`db/*.db`、`data/`、`release/` 均已 gitignore。
+
+---
+
+## 11. 残留清理（2026-09-11 02:30~02:34，已执行）
+
+清理原则：**隔离而非删除** —— 文件一律 `move` 到带时间戳的隔离区 + `manifest.json`（原路径/新路径/大小/SHA256），可整体还原；**已记账凭证一律不碰**。
+
+### 11.1 文件类：10 个 → 已移入隔离区（未删除）
+
+隔离区：`%LOCALAPPDATA%\FinanceSystem\backups\cleanup-20260911-0230\`
+DB 快照：`backups\finance-cleanup-20260911-0230.db`（SQLite 在线备份 API，`integrity_check=ok`）
+
+| 来源 | 内容 |
+|---|---|
+| `invoices\failed\` | 6 个：3× 25 字节占位符（`failed_invoice_1785993548/598/608.pdf`）+ 2× 一嗨真实发票副本 + 1× 结算单 |
+| `invoices\archive\2026-09\` | 2 个**孤儿副本**（无 epoch 后缀那两份） |
+| `release\` | `frozen-self-check.json`（2026-07-11 旧构建残留，335 B） |
+| `config\` | `feishu.app_secret.blob`（旧版密钥存储，262 B） |
+
+**复验**：`invoices\failed` 剩 **0 个**；台账 **63/63 个 `file_path` 全部仍在盘上**；`pytest` → **205 passed**。
+
+彻底删除（确认无需还原后）：
+```powershell
+Remove-Item -Recurse "$env:LOCALAPPDATA\FinanceSystem\backups\cleanup-20260911-0230"
+```
+
+### 11.2 凭证类：删 1 条、留 6 条
+
+**✅ 已删除：`voucher` id 11** —— `draft`「冲销 2026-07-0001：123」，冲销**真实**的股东投资 ¥200,000，从未记账，纯残留。
+- 删除 1 行 `voucher` + 2 行 `voucher_line`（`1002` 贷 200,000 / `3001` 借 200,000）
+- 审计：`audit_event` id **105** `voucher_draft_deleted`
+- 备份：`backups\finance-delvoucher11-20260911-023402.db`
+- 结果：`voucher` **13 → 12**（`posted` 11 + `pending_review` 1）；`posted` 数量、借贷平衡、发票台账（63 张 / ¥13,745.20）**全部未变**
+- ⚠️ 副作用：释放了 `idempotency_key='reversal:1'`（唯一索引 `ux_voucher_source_idempotency`）→ 日后可重新对凭证 1 发起冲销（这是**期望行为**）
+
+**🔴 有意保留：`voucher` 12 / 13 / 14**（`posted`「冲销 …：test data cleanup」）。**它们不该删**：
+1. DB 触发器 `posted_voucher_no_delete` 硬拦，实测直接 `RAISE(ABORT,'posted voucher is immutable')` —— 绕过它 = **篡改已记账凭证**，不是清理；
+2. 它们对冲的 5/6/7 也是 `posted`（`5602 飞书审批测试 888.88` / `1401 测试费用 199.00` / `1401 测试费用无科目 77.00`，合计 **¥1,164.88**）。**只删冲销项 = 让测试费用复活进账**，凭空多出 ¥1,164.88 费用 + 等额应付；
+3. 六张两两对冲、**账是平的**，留着只是台账里多几行 —— 成本远低于篡改风险。
+
+### 11.3 ⚠️ 一处方向性误判（已纠正）
+
+早前记录写「`archive\2026-09\` 里带 epoch 后缀的 PDF 是重复副本，可清」——**恰好相反**：
+
+| 文件名形态 | 实际身份 |
+|---|---|
+| `26337000000601987996_【一嗨-403.00元】…(1)_1789029248.pdf` | ✅ **正本** —— `invoice_doc.file_path`（id 10/11）指向它 |
+| `26337000000601987996_【一嗨-403.00元】…(1).pdf` | 🗑️ **孤儿** —— 回填时新落盘，无任何行引用 |
+
+**教训**：判副本前必须先 `SELECT file_path FROM invoice_doc` 建引用集合逐个比对，**别按文件名形态猜**。照旧记录执行会打断 2 条台账的文件引用。
+
+### 11.4 清理后复验（全绿）
+
+| 项 | 结果 |
+|---|---|
+| `invoices\failed` | 0 个 |
+| 台账 `file_path` 引用完整性 | 63/63 存在 |
+| `voucher` | 12（posted 11 / pending_review 1） |
+| 借贷平衡（全部 `posted` 凭证） | 0 张失衡 |
+| 发票台账 | 63 张 / ¥13,745.20（未变） |
+| `pytest` | **205 passed** |
 
 ---
 
@@ -581,7 +647,9 @@ python tools/backfill_business_data.py \
 | 修正发票金额口径 | `tools/fix_invoice_amounts.py`（默认只读，`--apply` 才写） |
 | **补收历史发票**（水位线之外的邮件） | `tools/backfill_history_invoices.py`（默认只读；`--limit N --apply` 才写；**绝不改 `last_uid`**） |
 | 体检 OCR 识别质量 | `tools/audit_history_invoice_ocr.py`（只读，出 JSON 到 `logs/`） |
-| **OCR 回归自检**（改了外部 OCR 后必跑） | `C:/tmp/ocr_venv2/Scripts/python.exe C:/Users/li1/invoice-agent/ocr_invoice.py --self-check C:/Users/li1/fin-system/work/ocr_samples` |
+| **OCR 回归自检**（改了外部 OCR 后必跑） | `C:/tmp/ocr_venv2/Scripts/python.exe C:/Users/li1/invoice-agent/ocr_invoice.py --self-check "C:\Users\li1\fin-system\work\ocr_samples" --company-tax-no 91330105MACRGYRN32` ⚠️ **目录参数必须写 Windows 路径**；填 `/c/Users/...` 不报错但输出「样本 0 张」（静默假阴性）。基线：`样本 109 张：可入账 64 / 不可入账 45（其中无文本层 0）` |
+| **残留隔离区 / 还原** | `%LOCALAPPDATA%\FinanceSystem\backups\cleanup-20260911-0230\`（含 `manifest.json` + SHA256，可整体还原；见 §11） |
+| 清理后的 DB 快照 | `backups\finance-cleanup-20260911-0230.db`（清理前）／`backups\finance-delvoucher11-20260911-023402.db`（删凭证 11 前） |
 | 跑测试 | `tests/` + `tools/acceptance_check.py` |
 | 了解全部设计/坑 | 技能 `sme-finance-desktop`（Hermes） |
 
@@ -599,7 +667,7 @@ python tools/backfill_business_data.py \
 | 桌面入口 | `桌面\财务系统.lnk` → ② | 目标 = `%USERPROFILE%\fin-system\release\财务系统\财务系统.exe`，工作目录已设 | ✅ |
 | `db\finance.db` | 账套本体 | 存在，241,664 字节，25 张表 | ✅ |
 | 科目数 | 46 | `account` = **46**（全部 `is_leaf=1`） | ✅ |
-| 凭证数 | 13 | `voucher` = **13**（11 posted / 1 draft / 1 pending_review） | ✅ |
+| 凭证数 | 12 | `voucher` = **12**（11 posted / 1 pending_review）；2026-09-11 02:34 删除废弃草稿 id 11 后由 13 降为 12 | ✅ |
 | 往来数 | 2 | `partner` = **2**；`arap_item` = 0（口径见第 9 节） | ⚠️ 需注明口径 |
 | 期间 | 2026-07 | 全部凭证 `period='2026-07'`；`period` 表 0 行 | ✅ 有附注 |
 | 发票张数/金额 | 6 张 / ¥1,436.83 | 6 张，`sum(total_cents)` = 143,683 → **¥1,436.83** | ✅ |
@@ -645,20 +713,21 @@ python tools/backfill_business_data.py \
 | P5 备份 WAL 安全 | 未 checkpoint 的 WAL 数据必须出现在备份里（专项用例验证通过） | ✅ |
 | P5 未执行写库 | `company` 仍全空、6 张发票 `file_path` 仍空 → **确实没有擅自改生产数据** | ✅ |
 
-**遗留风险（截至 2026-09-11 01:00）**：
+**遗留风险（截至 2026-09-11 02:34）**：
 
 | # | 项 | 状态 |
 |---|---|---|
 | 1 | `company` 表全空 → 报表抬头公司名为空 | ✅ **已修**（`21ed316` 工具已执行，抬头三字段写入） |
 | 2 | `partner.type` 中文「客户」/ 英文 `supplier` 混用 | ℹ️ 代码已兼容 `type IN (?,?)`，**非 bug** |
 | 3 | 6 张发票 `file_path` 空 → 与原始 PDF 无关联 | ✅ **已修**（6/6 归档落地，逐行 `os.path.exists` 复核） |
-| 4 | `invoices\failed\` 残留 + 3 条 `test data cleanup` 冲销凭证 | ⬜ 测试残留（含 3 个 25 字节占位符），清理前先确认清单 |
-| 5 | `release\frozen-self-check.json` 是 2026-07-11 旧文件 | ⬜ 陈旧，无功能影响 |
-| 6 | 配置双份：`settings.json` 的 `feishu` 段与 `feishu.json` 重复 | ⬜ 明确单一来源（`feishu.json` 为主） |
-| 7 | ~~**根因未修**：`summarize()` 丢字段 → 新收发票 `file_path` 依旧为空~~ | ✅ **已修**（`1cf2be2`，①~⑤ 全部落地 + 18 例回归） |
-| 8 | ~~财务系统**没有"成功归档"目录**，OCR 成功的 PDF 从未落盘~~ | ✅ **已修**（`1cf2be2`，新增 `invoices\archive\<月份>\` 并在入库时归档） |
-| 9 | ~~🔴 **新发现**：id=6~9 的 `tax_cents`/`total_cents` 漏计进项税（合计 ¥24.53）；id=9 已生成待审核凭证、应付账款同样少记 2.91~~ | ✅ **已修**（`26f2fb5` 工具已执行：4 张台账 + 凭证 15，二审借贷平衡，见 §10.2） |
-| 10 | ~~⚠️ `release\财务系统\` 仍是 P1/P3 时的构建，**不含 P6 归档逻辑**~~ | ✅ **已重打包**（`01:12`，`build.ps1` 六步全过；拆包实测 P6 符号全命中，见第 9 节） |
+| 4 | `invoices\failed\` 残留 + 3 条 `test data cleanup` 冲销凭证 | ✅ **文件 6 个已清入隔离区**（2026-09-11 02:30）；凭证 12/13/14 **有意保留**（posted + 两两对冲，删了会让测试费用复活 ¥1,164.88）；废弃草稿 id 11 **已删**。详见 §11 |
+| 5 | `release\frozen-self-check.json` 是 2026-07-11 旧文件 | ✅ **已清入隔离区**（2026-09-11 02:30） |
+| 6 | 配置双份：`settings.json` 的 `feishu` 段与 `feishu.json` 重复 | ⚠️ **优先级与早前记录相反**：`modules/feishu.py` 先读 `feishu.json`、再用 `settings.json.feishu` **覆盖**（`:63/80/89`）→ **实际生效的是 `settings.json`**。未去重（低收益高风险） |
+| 7 | 对外开票要素不全：`bank_account` 0 行、`company` 无电话 | ℹ️ 只做进项不受影响；将来要开票需补 |
+| 8 | ~~**根因未修**：`summarize()` 丢字段 → 新收发票 `file_path` 依旧为空~~ | ✅ **已修**（`1cf2be2`，①~⑤ 全部落地 + 18 例回归） |
+| 9 | ~~财务系统**没有"成功归档"目录**，OCR 成功的 PDF 从未落盘~~ | ✅ **已修**（`1cf2be2`，新增 `invoices\archive\<月份>\` 并在入库时归档） |
+| 10 | ~~🔴 **新发现**：id=6~9 的 `tax_cents`/`total_cents` 漏计进项税（合计 ¥24.53）；id=9 已生成待审核凭证、应付账款同样少记 2.91~~ | ✅ **已修**（`26f2fb5` 工具已执行：4 张台账 + 凭证 15，二审借贷平衡，见 §10.2） |
+| 11 | ~~⚠️ `release\财务系统\` 仍是 P1/P3 时的构建，**不含 P6 归档逻辑**~~ | ✅ **已重打包**（`01:12`，`build.ps1` 六步全过；拆包实测 P6 符号全命中，见第 9 节） |
 
 **P5/P6/P7 实机复核（2026-09-11）**：
 
