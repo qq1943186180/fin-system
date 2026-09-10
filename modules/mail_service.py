@@ -252,6 +252,20 @@ def _match_sender(msg_from: str, whitelist: Sequence[str]) -> bool:
     return any(w.lower() in addr for w in whitelist)
 
 
+def _message_id_of(msg: Any) -> str:
+    """imap-tools 的 MailMessage 没有 message_id 属性，需从原始 headers 取。"""
+    try:
+        headers = msg.headers or {}
+        for key in ("message-id", "Message-ID", "MESSAGE-ID"):
+            vals = headers.get(key)
+            if vals:
+                v = vals[0] if isinstance(vals, (list, tuple)) else vals
+                return v.decode("utf-8", errors="replace") if isinstance(v, bytes) else str(v)
+    except Exception:
+        LOG.debug("提取 Message-ID 失败", exc_info=True)
+    return ""
+
+
 def fetch_attachments(config: MailBoxConfig, *, mark_seen: bool = False) -> IntegrationResult:
     """IMAP 收件并提取附件。
 
@@ -326,7 +340,7 @@ def fetch_attachments(config: MailBoxConfig, *, mark_seen: bool = False) -> Inte
                                 "content_type": att.content_type,
                                 "subject": msg.subject,
                                 "uid": msg.uid,
-                                "message_id": msg.message_id,
+                                "message_id": _message_id_of(msg),
                             }
                         )
                     except Exception:

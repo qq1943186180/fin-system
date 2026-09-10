@@ -6,7 +6,7 @@ from pathlib import Path
 # 隔离数据根（必须在任何项目模块 import 之前）
 _isolated = Path(tempfile.mkdtemp(prefix="fin-accept-"))
 os.environ["FINANCE_SYSTEM_HOME"] = str(_isolated)
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tkinter as tk
 

@@ -23,7 +23,7 @@ def _agent_command() -> list[str] | None:
         from app_paths import CONFIG_DIR
         config_dir = Path(CONFIG_DIR)
     except Exception:
-        from pathlib import Path
+        LOG.exception("读取 CONFIG_DIR 失败，退回项目 config 目录")
         config_dir = Path(__file__).resolve().parents[1] / "config"
 
     settings_path = config_dir / "settings.json"
@@ -103,12 +103,21 @@ def _process_attachment_impl(
                 details={"stdout": stdout, "stderr": stderr},
             )
 
-        # 解析 OCR 输出（期望 JSON）
+        # 解析 OCR 输出：ocr_invoice.py 单文件模式在 stdout 打 {"file":..., "fields":{...}}
         try:
             import json
-            ocr_data = json.loads(stdout) if stdout else {}
+            ocr_out = json.loads(stdout) if stdout else {}
         except Exception:
             ocr_data = {"raw": stdout}
+        else:
+            # 兼容两种形态：直接 fields 字典 / {"file":..,"fields":..}
+            if isinstance(ocr_out, dict) and isinstance(ocr_out.get("fields"), dict):
+                ocr_data = dict(ocr_out["fields"])
+            elif isinstance(ocr_out, list) and ocr_out:
+                ocr_data = dict(ocr_out[0].get("fields", ocr_out[0]))
+            else:
+                ocr_data = ocr_out if isinstance(ocr_out, dict) else {"raw": stdout}
+            ocr_data["_mail_filename"] = filename
 
         # 调用现有 register_invoice 入库
         from modules.invoice_gui import register_invoice

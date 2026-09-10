@@ -20,6 +20,19 @@ LOG = get_logger("modules.mail_sync")
 MIN_POLL_INTERVAL = 60
 
 
+def _max_uid(attachments: list[dict]) -> int:
+    """附件 dict 列表的 uid 可能是 str（IMAP UID）或 int，安全取最大值。"""
+    best = 0
+    for a in attachments:
+        try:
+            u = int(a.get("uid") or 0)
+        except (TypeError, ValueError):
+            continue
+        if u > best:
+            best = u
+    return best
+
+
 class MailSyncEngine:
     def __init__(self, config_provider, poll_interval_minutes: int = 30):
         self._config_provider = config_provider
@@ -84,7 +97,7 @@ class MailSyncEngine:
                     all_ok = False
             # 所有附件处理成功后才推进 last_uid，避免丢失未处理邮件
             if all_ok:
-                cfg.last_uid = max((a.get("uid", 0) or 0) for a in attachments)
+                cfg.last_uid = _max_uid(attachments)
                 self._persist_last_uid(cfg)
 
     def _persist_last_uid(self, cfg: MailBoxConfig) -> None:
@@ -124,7 +137,7 @@ class MailSyncEngine:
                             "size": len(att.get("bytes", b"")),
                         }
                     )
-                cfg.last_uid = max((a.get("uid", 0) or 0) for a in result.data)
+                cfg.last_uid = _max_uid(result.data)
                 self._persist_last_uid(cfg)
             summary["boxes"].append(box_info)
         return summary

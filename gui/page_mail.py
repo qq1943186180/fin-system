@@ -172,6 +172,7 @@ class MailPage(Frame):
     # 同步引擎
     # ------------------------------------------------------------------
     def _config_provider(self):
+        # 纯读取：返回当前邮箱配置列表
         return self._configs
 
     def _update_box(self, updated: MailBoxConfig):
@@ -184,7 +185,11 @@ class MailPage(Frame):
 
     def _start_sync(self):
         if self._sync is None:
-            self._sync = MailSyncEngine(self._config_provider, poll_interval_minutes=30)
+            # mail_sync._persist_last_uid 经 provider.update_box(cfg) 回写水位线；
+            # bound method 不能挂属性，用普通函数对象承载 update_box。
+            provider = lambda: self._configs  # noqa: E731
+            provider.update_box = self._update_box  # type: ignore[attr-defined]
+            self._sync = MailSyncEngine(provider, poll_interval_minutes=30)
             try:
                 interval = 30
                 try:
