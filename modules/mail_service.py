@@ -243,6 +243,23 @@ def _match_subject_regex(subject: str, pattern: str) -> bool:
         return True
 
 
+def _uids_to_ranges(uids: list[str]) -> str:
+    """把 uid 字符串列表压成 IMAP UID 区间串（如 ['3','4','7'] -> '3:4,7'）。"""
+    nums = sorted({int(u) for u in uids if str(u).strip().isdigit()})
+    if not nums:
+        return ""
+    parts: list[str] = []
+    start = prev = nums[0]
+    for n in nums[1:]:
+        if n == prev + 1:
+            prev = n
+            continue
+        parts.append(f"{start}:{prev}" if start != prev else str(start))
+        start = prev = n
+    parts.append(f"{start}:{prev}" if start != prev else str(start))
+    return ",".join(parts)
+
+
 def _match_sender(msg_from: str, whitelist: Sequence[str]) -> bool:
     """发件人白名单匹配。"""
     if not whitelist:
@@ -308,19 +325,38 @@ def fetch_attachments(config: MailBoxConfig, *, mark_seen: bool = False) -> Inte
                 criteria = AND(uid=f"{config.last_uid + 1}:*")
             else:
                 criteria = AND(all=True)
-            for msg in mailbox.fetch(criteria, mark_seen=mark_seen):
+            # 两阶段：先只拉邮件头做主题过滤（省流量/防 163 限流），
+            # 再下载命中邮件的完整正文取附件。
+            hit_uids: list[str] = []
+            for head in mailbox.fetch(criteria, headers_only=True, bulk=25):
+                if not _match_sender(head.from_, config.sender_whitelist):
+                    LOG.debug("[%s] 跳过非白名单发件人: %s", config.name, head.from_)
+                    continue
+                if not _match_subject(head.subject or "", config.subject_filter):
+                    continue
+                if not _match_subject_regex(head.subject or "", config.subject_regex):
+                    LOG.debug("[%s] 跳过正则不匹配: %s", config.name, head.subject)
+                    continue
+                if head.uid:
+                    hit_uids.append(str(head.uid))
+            if not hit_uids:
+                return IntegrationResult(
+                    IntegrationStatus.SUCCESS,
+                    "获取 0 个附件。",
+                    [],
+                )
+            uid_ranges = _uids_to_ranges(hit_uids)
+            for msg in mailbox.fetch(AND(uid=uid_ranges), mark_seen=mark_seen):
                 # 发件人白名单
                 if not _match_sender(msg.from_, config.sender_whitelist):
-                    LOG.debug("[%s] 跳过非白名单发件人: %s", config.name, msg.from_)
                     continue
                 # 主题关键词过滤
                 if not _match_subject(msg.subject or "", config.subject_filter):
                     continue
                 # 正则主题过滤
                 if not _match_subject_regex(msg.subject or "", config.subject_regex):
-                    LOG.debug("[%s] 跳过正则不匹配: %s", config.name, msg.subject)
                     continue
-                for att in msg.attachments:
+                for att in msg.attachments or []:
                     fname = att.filename or "attachment"
                     ext = Path(fname).suffix.lower()
                     if ext not in config.allowed_ext:

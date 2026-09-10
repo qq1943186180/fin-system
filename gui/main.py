@@ -189,7 +189,7 @@ def _table_columns(conn, table: str) -> set[str]:
 
 
 class FinanceApp:
-    NAV_ITEMS = ("工作台", "账务", "资金", "往来", "费用票据", "邮件收票", "进销存", "报表", "期末处理", "设置")
+    NAV_ITEMS = ("工作台", "账务", "账簿", "资金", "往来", "费用票据", "邮件收票", "进销存", "报表", "期末处理", "设置")
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -485,6 +485,7 @@ class FinanceApp:
         builders = {
             "工作台": self._page_dashboard,
             "账务": self._page_ledger,
+            "账簿": self._page_books,
             "资金": self._page_cash,
             "往来": self._page_partners,
             "费用票据": self._page_expense_invoice,
@@ -1631,6 +1632,244 @@ class FinanceApp:
         pdf_btn.configure(command=lambda: _do_export("pdf"))
         if not self._issues:
             self.root.after_idle(generate)
+
+    # ------------------------------ 账簿 ------------------------------
+    def _page_books(self, parent) -> None:
+        self.header_status.configure(text="账簿：科目余额表 + 序时簿，仅取已记账凭证", fg=C_TEXT_MUTED)
+        controls = tk.Frame(parent, bg=C_BG)
+        controls.pack(fill="x", pady=(0, 10))
+        period_var = tk.StringVar(value=_current_period())
+        tk.Label(controls, text="会计期间", bg=C_BG, font=FONT).pack(side="left")
+        ttk.Combobox(controls, textvariable=period_var, values=self._period_values(), width=12, state="readonly").pack(side="left", padx=6)
+        zero_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(controls, text="显示零余额科目", variable=zero_var, bg=C_BG, font=FONT, activebackground=C_BG, selectcolor=C_CARD).pack(side="left", padx=8)
+        gen_btn = ttk.Button(controls, text="生成账簿")
+        csv_btn = ttk.Button(controls, text="导出 CSV")
+        xlsx_btn = ttk.Button(controls, text="导出 Excel")
+        pdf_btn = ttk.Button(controls, text="导出 PDF")
+        for button in (gen_btn, csv_btn, xlsx_btn, pdf_btn):
+            button.pack(side="left", padx=4)
+
+        notebook = ttk.Notebook(parent)
+        notebook.pack(fill="both", expand=True)
+        ab_tab, journal_tab = [tk.Frame(notebook, bg=C_PANEL) for _ in range(2)]
+        notebook.add(ab_tab, text="科目余额表")
+        notebook.add(journal_tab, text="序时簿")
+        ab_tree = self._tree(ab_tab, (("code", "科目编码", 95, "w"), ("name", "科目名称", 180, "w"), ("category", "类别", 70, "center"), ("opening", "期初余额", 120, "e"), ("debit", "本期借方", 120, "e"), ("credit", "本期贷方", 120, "e"), ("ending_debit", "期末借方", 120, "e"), ("ending_credit", "期末贷方", 120, "e")), height=15)
+        journal_tree = self._tree(journal_tab, (("date", "日期", 95, "center"), ("vno", "凭证号", 135, "w"), ("seq", "序号", 55, "center"), ("account", "科目", 180, "w"), ("summary", "摘要", 250, "w"), ("debit", "借方", 110, "e"), ("credit", "贷方", 110, "e"), ("running", "累计余额", 120, "e"), ("source", "来源", 80, "center")), height=15)
+        footer = tk.Label(parent, text="", font=FONT_B, bg=C_BG, fg=C_TEXT)
+        footer.pack(anchor="e", pady=(8, 0))
+        cache: dict = {"period": None}
+
+        def _ab_values(row: dict) -> tuple:
+            opening = _row_cents(row, "opening_debit_cents", "opening_debit") - _row_cents(row, "opening_credit_cents", "opening_credit")
+            return (
+                row.get("code"), row.get("name"), row.get("category") or "",
+                _money(opening),
+                _money(_row_cents(row, "period_debit_cents", "period_debit")),
+                _money(_row_cents(row, "period_credit_cents", "period_credit")),
+                _money(_row_cents(row, "ending_debit_cents", "ending_debit")),
+                _money(_row_cents(row, "ending_credit_cents", "ending_credit")),
+            )
+
+        def _journal_values(row: dict) -> tuple:
+            account = f"{row.get('account_code') or ''} {row.get('account_name') or ''}".strip()
+            running = _row_cents(row, "running_debit_cents", "running_debit") - _row_cents(row, "running_credit_cents", "running_credit")
+            return (
+                row.get("date"), row.get("vno"), row.get("seq"), account,
+                row.get("line_summary") or row.get("voucher_summary") or "",
+                _money(_row_cents(row, "debit_cents", "debit")),
+                _money(_row_cents(row, "credit_cents", "credit")),
+                _money(running),
+                row.get("source") or "",
+            )
+
+        def generate():
+            try:
+                period = _validate_period(period_var.get())
+                account_table = reports.account_balance_table(period, include_zero=zero_var.get())
+                journal = reports.chronological_ledger(period=period)
+            except Exception as exc:
+                if isinstance(exc, getattr(reports, "ReportBlockedError", RuntimeError)):
+                    self._refresh_issue_state()
+                messagebox.showerror("生成失败", str(exc), parent=self.root)
+                return
+            cache.clear()
+            cache.update({"period": period, "account_balance_table": account_table, "chronological_ledger": journal})
+            ab_tree.delete(*ab_tree.get_children())
+            journal_tree.delete(*journal_tree.get_children())
+            for row in account_table.get("rows", []):
+                ab_tree.insert("", "end", values=_ab_values(row))
+            for row in journal.get("rows", []):
+                journal_tree.insert("", "end", values=_journal_values(row))
+            journal_ok = bool(journal.get("balanced"))
+            footer.configure(
+                text=f"科目余额表 {len(account_table.get('rows', []))} 行 · 序时簿 {len(journal.get('rows', []))} 行 · 序时簿{'借贷相等' if journal_ok else '借贷不等'}",
+                fg=C_OK if journal_ok else C_DANGER,
+            )
+
+        def _do_export(fmt: str):
+            if cache.get("period") != period_var.get():
+                generate()
+                if cache.get("period") != period_var.get():
+                    return
+            ext = {"csv": ".csv", "xlsx": ".xlsx", "pdf": ".pdf"}.get(fmt, ".csv")
+            initial_dir = str(getattr(app_paths, "REPORTS_DIR", ROOT / "data" / "reports"))
+            path = filedialog.asksaveasfilename(parent=self.root, title="导出账簿", initialdir=initial_dir, initialfile=f"账簿_{period_var.get()}{ext}", defaultextension=ext, filetypes=((f"{fmt.upper()} 文件", f"*{ext}"), ("所有文件", "*.*")))
+            if not path:
+                return
+            try:
+                if fmt == "csv":
+                    self._export_books_csv(Path(path), cache)
+                elif fmt == "xlsx":
+                    self._export_books_xlsx(Path(path), cache)
+                elif fmt == "pdf":
+                    self._export_books_pdf(Path(path), cache)
+                else:
+                    messagebox.showerror("导出失败", f"不支持的格式: {fmt}", parent=self.root)
+                    return
+            except Exception as exc:
+                messagebox.showerror("导出失败", str(exc), parent=self.root)
+                return
+            messagebox.showinfo("导出完成", f"账簿已导出到：\n{path}", parent=self.root)
+
+        def drill(_event=None):
+            selection = ab_tree.selection()
+            if not selection:
+                return
+            code = str(ab_tree.item(selection[0], "values")[0] or "").strip()
+            if code:
+                self._pending_ledger_account = (code, period_var.get())
+                self._show_page("账务")
+
+        ab_tree.bind("<Double-1>", drill)
+        gen_btn.configure(command=generate)
+        csv_btn.configure(command=lambda: _do_export("csv"))
+        xlsx_btn.configure(command=lambda: _do_export("xlsx"))
+        pdf_btn.configure(command=lambda: _do_export("pdf"))
+        if not self._issues:
+            self.root.after_idle(generate)
+
+    def _export_books_csv(self, path: Path, cache: dict) -> None:
+        period = cache.get("period") or ""
+        account_table = cache.get("account_balance_table") or {}
+        journal = cache.get("chronological_ledger") or {}
+        with path.open("w", encoding="utf-8-sig", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(["科目余额表", period])
+            writer.writerow(["科目编码", "科目名称", "类别", "期初余额", "本期借方", "本期贷方", "期末借方", "期末贷方"])
+            for row in account_table.get("rows", []):
+                opening = _row_cents(row, "opening_debit_cents", "opening_debit") - _row_cents(row, "opening_credit_cents", "opening_credit")
+                writer.writerow((
+                    row.get("code"), row.get("name"), row.get("category") or "", _money(opening),
+                    _money(_row_cents(row, "period_debit_cents", "period_debit")),
+                    _money(_row_cents(row, "period_credit_cents", "period_credit")),
+                    _money(_row_cents(row, "ending_debit_cents", "ending_debit")),
+                    _money(_row_cents(row, "ending_credit_cents", "ending_credit")),
+                ))
+            writer.writerow([])
+            writer.writerow(["序时簿", journal.get("start_period", period), journal.get("end_period", period)])
+            writer.writerow(["日期", "凭证号", "序号", "科目编码", "科目名称", "摘要", "借方", "贷方", "来源"])
+            for row in journal.get("rows", []):
+                writer.writerow((
+                    row.get("date"), row.get("vno"), row.get("seq"), row.get("account_code"),
+                    row.get("account_name"), row.get("line_summary") or row.get("voucher_summary") or "",
+                    _money(_row_cents(row, "debit_cents", "debit")),
+                    _money(_row_cents(row, "credit_cents", "credit")), row.get("source") or "",
+                ))
+
+    def _export_books_xlsx(self, path: Path, cache: dict) -> None:
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "科目余额表"
+        ws.append(["科目编码", "科目名称", "类别", "期初余额", "本期借方", "本期贷方", "期末借方", "期末贷方"])
+        for row in (cache.get("account_balance_table") or {}).get("rows", []):
+            opening = _row_cents(row, "opening_debit_cents", "opening_debit") - _row_cents(row, "opening_credit_cents", "opening_credit")
+            ws.append((
+                row.get("code"), row.get("name"), row.get("category") or "", _money(opening),
+                _money(_row_cents(row, "period_debit_cents", "period_debit")),
+                _money(_row_cents(row, "period_credit_cents", "period_credit")),
+                _money(_row_cents(row, "ending_debit_cents", "ending_debit")),
+                _money(_row_cents(row, "ending_credit_cents", "ending_credit")),
+            ))
+        ws2 = wb.create_sheet("序时簿")
+        ws2.append(["日期", "凭证号", "序号", "科目编码", "科目名称", "摘要", "借方", "贷方", "来源"])
+        for row in (cache.get("chronological_ledger") or {}).get("rows", []):
+            ws2.append((
+                row.get("date"), row.get("vno"), row.get("seq"), row.get("account_code"), row.get("account_name"),
+                row.get("line_summary") or row.get("voucher_summary") or "",
+                _money(_row_cents(row, "debit_cents", "debit")),
+                _money(_row_cents(row, "credit_cents", "credit")), row.get("source") or "",
+            ))
+        for sheet in wb.worksheets:
+            for column in sheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        max_length = max(max_length, len(str(cell.value or "")))
+                    except Exception:
+                        pass
+                sheet.column_dimensions[column_letter].width = min(max_length + 2, 60)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(str(path))
+
+    def _export_books_pdf(self, path: Path, cache: dict) -> None:
+        from fpdf import FPDF
+        pdf = FPDF()
+        cjk = self._resolve_cjk_font()
+        font = "Helvetica"
+        if cjk:
+            try:
+                pdf.add_font("CJK", "", cjk)
+                pdf.add_font("CJK", "B", cjk)
+                font = "CJK"
+            except Exception:
+                font = "Helvetica"
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_font(font, "B", 14)
+        pdf.cell(0, 10, f"账簿 {cache.get('period') or ''}", ln=True, align="L")
+        pdf.ln(2)
+
+        def _section(title, headers, rows):
+            pdf.set_font(font, "B", 11)
+            pdf.cell(0, 8, title, ln=True)
+            pdf.set_font(font, "B", 8)
+            col_w = 190 / max(len(headers), 1)
+            for h in headers:
+                pdf.cell(col_w, 7, str(h), border=1, align="C")
+            pdf.ln()
+            pdf.set_font(font, "", 8)
+            for row in rows:
+                for value in row:
+                    pdf.cell(col_w, 7, str(value) if value is not None else "", border=1, align="L")
+                pdf.ln()
+            pdf.ln(3)
+
+        ab_rows = []
+        for row in (cache.get("account_balance_table") or {}).get("rows", []):
+            opening = _row_cents(row, "opening_debit_cents", "opening_debit") - _row_cents(row, "opening_credit_cents", "opening_credit")
+            ab_rows.append((
+                row.get("code"), row.get("name"), _money(opening),
+                _money(_row_cents(row, "period_debit_cents", "period_debit")),
+                _money(_row_cents(row, "period_credit_cents", "period_credit")),
+                _money(_row_cents(row, "ending_debit_cents", "ending_debit")),
+                _money(_row_cents(row, "ending_credit_cents", "ending_credit")),
+            ))
+        _section("科目余额表", ["科目编码", "科目名称", "期初余额", "本期借方", "本期贷方", "期末借方", "期末贷方"], ab_rows)
+        journal_rows = []
+        for row in (cache.get("chronological_ledger") or {}).get("rows", []):
+            journal_rows.append((
+                row.get("date"), row.get("vno"), row.get("seq"), row.get("account_code"), row.get("account_name"),
+                row.get("line_summary") or row.get("voucher_summary") or "",
+                _money(_row_cents(row, "debit_cents", "debit")),
+                _money(_row_cents(row, "credit_cents", "credit")), row.get("source") or "",
+            ))
+        _section("序时簿", ["日期", "凭证号", "序号", "科目编码", "科目名称", "摘要", "借方", "贷方", "来源"], journal_rows)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pdf.output(str(path))
 
     def _export_report_csv(self, path: Path, bundle: dict) -> None:
         with path.open("w", encoding="utf-8-sig", newline="") as stream:
