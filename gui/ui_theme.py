@@ -66,9 +66,11 @@ def configure_light_style(root: tk.Tk) -> None:
     """Apply a full light business theme to ttk widgets."""
     style = ttk.Style(root)
 
-    # Pick a native theme that supports override reasonably well.
+    # 注意：Windows 上的 'vista' 主题用原生绘制，会忽略 ttk 的 background 映射
+    # （选中页签变“白底白字”不可读，且整套浅色配色不生效）。改用完全支持
+    # 样式覆盖的 'clam'，才能呈现浅色商务主题。
     available = list(style.theme_names())
-    preferred = [t for t in ("vista", "clam", "alt", "default") if t in available]
+    preferred = [t for t in ("clam", "alt", "default") if t in available]
     if preferred:
         style.theme_use(preferred[0])
 
