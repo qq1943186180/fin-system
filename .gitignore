@@ -1,5 +1,11 @@
 # Per-user data and credentials
-config/feishu.json
+# 只忽略 config/ 下的**文件**（不写 config/ 本身），否则下面的 ! 放行规则会被父目录规则压掉。
+# credentials.json 是全部密钥的仓库（邮箱授权码 + 飞书 secret 的加密 blob），
+# settings.json 含邮箱地址与 OCR 命令路径 —— 一律不进仓库。
+# 覆盖 *.json 与 *.blob 而非逐个列举，是为了让"以后新增的配置文件默认安全"。
+config/*.json
+config/*.blob
+!config/feishu.example.json
 db/*.db
 db/*.db-*
 data/
