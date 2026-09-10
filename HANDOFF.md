@@ -63,10 +63,11 @@ modules/
   feishu.py           # 飞书审批（创建实例 + 轮询状态）
   mail_service.py     # IMAP 收件 / SMTP 发信封装
   mail_sync.py        # 后台轮询线程（去重 + 水位线）
-  mail_processor.py   # 附件 → OCR → 入库；失败归档可重试
+  mail_processor.py   # 附件 → OCR / 数电票 XML → 入库；失败归档可重试
+  einvoice.py         # ★ 附件类型单一事实来源 + 数电票 XML/OFD 结构化解析（不走 OCR）
   export_service.py   # CSV/Excel/PDF 导出
 db/__init__.py        # schema（CREATE TABLE）+ 《小企业会计准则》科目表预置（在 .py 里，无 .sql 文件）
-tests/                # pytest（10 个测试文件，收集 41 个用例）
+tests/                # pytest（19 个测试文件，收集 229 个用例）
 tools/acceptance_check.py   # 逐页 + 新模块冒烟验收
 docs/                 # 截图等
 release/ build/ dist/ work/ # 构建产物/中间件（可再生，已 gitignore）
@@ -128,7 +129,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 "C:/tmp/ocr_venv2/Scripts/python.exe" tools/acceptance_check.py  # 逐页 + 新模块冒烟
 ```
 
-- 当前基线：**pytest 52 passed** / 验收 **17 OK、0 FAIL**。（41 → 52 是 2026-09-10 新增 `tests/test_backup_retention.py` 的 11 例）
+- 当前基线：**pytest 229 passed** / 验收 **17 OK、0 FAIL**。（41 → 52 是 2026-09-10 新增 `tests/test_backup_retention.py` 的 11 例；→ 171 是打包验证器等；→ **229** 是 2026-09-11 方案 B 新增 `tests/test_einvoice_xml.py` 的 24 例）
 - 打包后自检：`release\财务系统\财务系统.exe --self-check report=<路径> stderr=<路径>`（**不带参数跑是空输出、exit 0，属正常**；带参才写 `self-check.json`）。
 
 ---
@@ -166,7 +167,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
   - ✅ `manifest.sha256` 999 项，`财务系统.exe` 哈希与清单一致（`09b7332…2a3cd4`）；构建期内置自检 `exit=0`。
   - ⚠️ `release\frozen-self-check.json`（`7/11` 那份）是**旧构建残留**——`build.ps1` 把自检报告写到临时目录，不回写发布根，故该文件不会更新。**已于 2026-09-11 清入隔离区**（见 §11 残留清理）。
   - ℹ️ 构建工具链：本机无 `py` 启动器，3.11 宿主为 `C:\Users\li1\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\python.exe`，需 `-PythonPath` 显式传入（`build.ps1` 找不到 `py -3.11` 会直接抛错）。
-- ✅ **回归基线：`pytest` 171 passed**（P1 前 41 → P1 后 52 → P2~P5 后 111 → P6 后 130 → P7 后 164 → 打包验证器后 171）。
+- ✅ **回归基线：`pytest` 229 passed**（P1 前 41 → P1 后 52 → P2~P5 后 111 → P6 后 130 → P7 后 164 → 打包验证器后 171 → **方案 B 后 229**）。
 - 账套实际数据：科目 46 · 凭证 **12** · 往来（档案）2 · 期间 **2026-07**。
   - 补口径：凭证 12 = 已记账 **11** + 待审核 1；其中有 3 条 `test data cleanup` 冲销凭证，属**有意保留**的测试残留（已记账、与凭证 5/6/7 两两对冲，账平）。
   - **2026-09-11 02:34 删除了 1 条废弃草稿**：`voucher` id 11「冲销 2026-07-0001：123」（冲销真实的股东投资 ¥200,000，从未记账，纯残留）。13 → 12，`posted` 11 张未变、借贷平衡未变、发票台账未变；审计 `audit_event` id 105 `voucher_draft_deleted`；备份 `backups\finance-delvoucher11-20260911-023402.db`。
@@ -184,7 +185,9 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
   - 成立日期：2023-08-01
   - 登记机关：杭州市拱墅区市场监督管理局；执照打印日期 2026-01-12（换发/变更后版本）
   - ⚠️ 库内**没有**电话 / 开户行及账号字段（`bank_account` 表 0 行）。若将来要**对外开票**（销方信息需"名称+税号+地址电话+开户行账号"），这两项仍缺，需补。
-- 发票库存：**共 14 张，账面价税合计 ¥2,672.42**（其中 13 张「待确认」+ 1 张「待审核」）。
+- 发票库存：**共 63 张，账面价税合计 ¥13,745.20**（62 张「待确认」+ 1 张「待审核」；来源 `textlayer` 59 / `unknown` 4）。
+  - ⚠️ 早前这里写"14 张 ¥2,672.42"是**历史补收前的陈旧值**（2026-09-11 03:0x 只读复核修正）。
+  - 另有 1 张「待审核」凭证与发票台账相互独立，勿混。
   - **原 6 张（2026 年）**：`file_path` / `file_hash` / 税号已全部补齐，原件归档于 `invoices\archive\<开票月份>\`（提交 `21ed316`）；`tax_cents` / `total_cents` 已按票面真值修正（少计 ¥24.53，提交 `26f2fb5`）。详见 §10.2。
   - ✅ **新增 8 张（2024 年，2026-09-11 01:41 试收自 163 邮箱，价税合计 ¥1,211.06）**：见 §10.3。
     购买方全部正确为「高迥（杭州）贸易有限责任公司」`91330105MACRGYRN32`，金额自洽，
@@ -208,13 +211,15 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
   金额抽取改六级优先级（含**大写金额校正**），买卖方按**版面区域**配对（不再按出现顺序）。
   新增 `--self-check <DIR>` 自检与 `--company-tax-no` 可选锚点；CLI 契约不变。
   回归基线：`work/ocr_samples/`（109 个真实附件 + `baseline.json`），**零回退**（老版能过的 17 张数值一致）。
-- [ ] 🟡 **P10：换数据源 + 支持 XML/OFD（方案已出，待决策）** —— 评估文档 `docs/invoice-ocr-options-2026-09-11.md`。
+- [ ] 🟡 **P10：换数据源 + 支持 XML/OFD（B 已交付，A/D 待哥哥决策）** —— 评估文档 `docs/invoice-ocr-options-2026-09-11.md`。
+  - ✅ **方案 B（合规刚需）已完成，详见 §10.4。**
+  - 🔴 **边界（先看）**：**系统 / agent 无法程序化接税局**，没有 API。合法直连通道只有「乐企（Natural System）」，门槛：营收 ≥5000 万 + 开票受票 ≥1 万份（多地口径 5 万份）/ 开票金额 ≥1 亿 + 纳税信用 A/B 级 + 软著 + 固定 IP + 等保 2.0 —— **高迥不满足任何一条**。所以下文「方案 A」= **哥哥人工导出/下载**，系统只做「拿到文件后解析/归档/对账」。爬税局/模拟登录一律不做。
   - **核心判断**：瓶颈**不是 OCR 精度**（PDF 场景已 100%），而是**数据源**。110 个附件中 109 个 PDF **全部有文本层**，PDF 兜底 OCR 从未触发 → 继续调 OCR 引擎边际收益 ≈ 0。
-  - **方案 A（首选）**：改从**税局「税务数字账户 → 全量发票查询 → 取得发票」**取数 —— ① 导出 Excel（含明细行）当**权威真值** ② 批量下载 **XML/OFD/PDF** 当**法定归档件**。邮箱链路职责降级为「归集附件」。⚠️ 只能下载数电票的 XML/OFD（老式税控发票下不了），但 Excel 导出覆盖全部。
+  - **方案 A（首选）**：哥哥**手动**从**税局「税务数字账户 → 全量发票查询 → 取得发票」**取数 —— ① 导出 Excel（含明细行）当**权威真值** ② 批量下载 **XML/OFD/PDF** 当**法定归档件**。邮箱链路职责降级为「归集附件」。⚠️ 只能下载数电票的 XML/OFD（老式税控发票下不了），但 Excel 导出覆盖全部。
   - **方案 B（🔴 合规刚需）**：白名单 `modules/mail_processor.py:66` / `tools/backfill_history_invoices.py:146` 目前只认 `{.pdf,.jpg,.jpeg,.png}`，**XML/OFD 静默丢弃**（无日志无提示）。而财会〔2020〕6号 + 财政部官方口径明确：**PDF/OFD 是预览件，含数字签名的 XML 才是符合入账要求的格式**。现状只归档 PDF，对数电票**不合规**。
   - **方案 C（可做不急）**：PaddleOCR → RapidOCR（~2GB → ~50–200MB，CPU 快 3–4×，模型同源）。因为几乎不触发，属"减依赖"而非"提精度"。
   - **方案 D（A 的必然搭配）**：税局 Excel 真值 ↔ `invoice_doc` 台账**双向对账**（漏票 / 多票 / 金额不符 / 重复）。
-  - **需哥哥做的第一步**：登录税局导出「取得发票」Excel（2023-01 ~ 2026-09）丢进 `work/`，后续对账脚本我来写（只读）。
+  - **需哥哥做的第一步（人工，系统无法代劳）**：哥哥登录电子税务局，导出「取得发票」Excel（2023-01 ~ 2026-09）丢进 `work/`。后续对账脚本我来写（只读）。
 - [x] ✅ **P1 备份缺陷（已修复，提交 `3d27438`）**：原 `gui/main.py` `_run_startup_backup()` 有两处真实缺陷 —— ①「今天是否已备份」用 `date.today().isoformat()`（`finance-2026-09-10`）去匹配备份文件名 `finance-20260910-...` 的 `%Y%m%d` 前缀，**永不相等**，使「每天首启一次」退化成「每次启动都备份」，叠加 `MAX_BACKUPS=5` 后同一天的多次启动把历史全滚掉（**生产库实测 5 份全是 9/10 同一天，等于实际没有保留策略**）；②整函数 `except Exception: pass`，备份失败用户无感。现已改为：正则精确匹配自动备份命名（迁移前备份不参与轮转）+ 分层保留（7 日 / 4 周 / 6 月，超期才淘汰）+ 失败记 `LOG.error` 并在设置页标红。详见 `docs/architecture-review-2026-09-10-followup.md` §2.1。
 - [x] ✅ **P2 `.gitignore` 纵深防御缺口（已修复，提交 `d75c8d2`）**：原只忽略 `config/feishu.json`，而 `config/credentials.json`（全部密钥的仓库）／`config/settings.json`／`config/*.blob` **都不被忽略**（`git check-ignore` 实测）。已改为按类型覆盖 `config/*.json` + `config/*.blob` + `!config/feishu.example.json` + `db/*.db`——**以后新增的配置文件默认安全**。注意规则写 `config/*.json` 而非 `config/`：忽略整个目录会让 `!` 放行规则失效。回归测试 `tests/test_repo_hygiene.py`（10 例，真实调用 `git check-ignore`）；旧规则下 5 例失败，新规则全绿。
 - [x] ✅ **P3 `configure_dark_style` 命名与实现相反（已修复，提交 `1051a1b`）**：该别名实为 `configure_light_style`（`gui/ui_theme.py:151`），配色全浅色，会误导后人去「修」成深色（而深色风已明确否决）。已删除别名并把 `gui/main.py` 两处调用点、三个页面里未使用的 import 全部改名。回归测试 `tests/test_ui_theme.py`（13 例，含真实 Tk 断言实际生效主题为 `clam`）；把主题优先级改成 `vista` 优先可复现失败。
@@ -560,6 +565,54 @@ python tools/backfill_business_data.py \
 
 ---
 
+### 10.4 方案 B：数电票 XML / OFD 支持（✅ 2026-09-11 交付）
+
+**为什么做**：财会〔2020〕6号 + 财政部/税务总局答复口径明确 —— 数电票的
+**PDF / OFD 是「预览」件，含数字签名的 XML 才是符合入账要求的电子文件格式**。
+而此前附件白名单只认 `{.pdf,.jpg,.jpeg,.png}`，**XML/OFD 被静默丢弃**
+（无日志、无提示、无计数）。只归档 PDF 对数电票**不合规**，
+且一旦发件方改发 XML 会**毫无察觉地漏票**。
+
+**核心设计**：把「支持的附件类型」收敛成**单一事实来源** `modules/einvoice.py`，
+终结白名单在邮件同步/回填/重试三处手工同步（与 P4「依赖三处同步」同类隐患）。
+
+| 文件 | 改动 |
+|---|---|
+| `modules/einvoice.py` | **新增**。`IMAGE_EXTS`（走 OCR）/ `EINVOICE_EXTS`（走结构化）/ `SUPPORTED_EXTS`（并集，含 assert 防漂移）；`parse_einvoice_xml()`、`extract_ofd_invoice_xml()`、`parse_einvoice_attachment()`；`EinvoiceParseError` |
+| `modules/mail_processor.py` | 白名单改引 `SUPPORTED_EXTS`；XML/OFD 走**本地解析不启 OCR 子进程**（未配 `invoice_agent_command` 也能入库）；新增 `_quarantine()` 保证解析失败**必留痕**；抽出 `_run_ocr()` |
+| `modules/mail_service.py` | `MailBoxConfig` 默认值改引 `SUPPORTED_EXTS` |
+| `tools/invoice_ocr_probe.py` | `probe_bytes()` 对 XML/OFD 走本地解析；`classify()` 允许「缺不含税金额但有价税合计+税额」（可推导） |
+| `财务系统.spec` | `hiddenimports` 补 `modules.einvoice` |
+| 生产 `config/settings.json` | 两个邮箱 `allowed_ext` 各补 `.xml/.ofd`（备份 `settings.json.bak-20260911-025937`） |
+
+**解析器要点**（依据《电子凭证会计数据标准——数电票(试行版)》官方要素表）：
+- 字段位：`TaxSupervisionInfo/InvoiceNumber`=发票号码、`BasicInformation/RequestTime`=开票日期、
+  `SellerInformation`/`BuyerInformation` 下的 `SellerIdNum`/`BuyerIdNum` 等
+- **按父节点消歧**：明细行里也有 `TotaltaxIncludedAmount`，不能与顶层
+  `TotalTax-includedAmount`（价税合计）混淆 —— 这是最容易写错的一处
+- 兼容**命名空间**、**大小写变体**（`Einvoice` / `TotaltaxIncludedAmount`）、多版本别名
+- `明细行` 收集全部 `IssuItemInformation`（品名/规格/单位/数量/单价/金额/税率/税额）—— PDF 正则做不到
+- 金额归一：税额 `0.120000` → `0.12`；分位各自取整后若 `不含税+税额 ≠ 价税合计`，
+  **丢弃不含税金额**让下游按「价税合计−税额」推导并记 WARNING，而不是整张票被拒
+- OFD：ZIP 内找内嵌 XML（单件上限 8MB 防解压炸弹）；找不到则**明确报错**并提示
+  「OFD 是版式件，合规入账需 XML，请在税局批量下载时勾选 XML」
+- 来源可审计：`invoice_doc.ocr_version` = `einvoice-xml` / `einvoice-ofd-xml`
+
+**验证**（两轮，均为真跑）：
+1. 回归 `tests/test_einvoice_xml.py` **24 例**全绿；全量 **229 passed**（原 205 + 24）。
+   过程中测试**抓到我自己一个真 bug**：`EINVOICE_EXTS` 初始定义成了「全部支持类型」，
+   但调用处按「结构化类型」用 —— 已改为 `XML|OFD`，并加 `assert IMAGE_EXTS|EINVOICE_EXTS == set(SUPPORTED_EXTS)` 防回归。
+2. **脱离 pytest 的真实端到端**（隔离 `FINANCE_SYSTEM_HOME`，不碰生产库）：
+   - XML 入库 ✅ ¥600.00，税额 `33.960000`→`33.96`，来源 `einvoice-xml`，原件归档 `archive/2026-07/`
+   - OFD（内嵌 XML）入库 ✅ 来源 `einvoice-ofd-xml`
+   - 坏 XML → 明确报错 + **落盘留痕** `invoices/failed/坏文件_*.xml`（证明不再静默丢弃）
+   - 直接查库复核 2 行、金额分位、`file_path` 均正确
+
+**遗留**：`release/财务系统.exe` 是 PyInstaller 产物，桌面快捷方式指向它 ——
+**源码改动必须重新构建 exe 才生效**。
+
+---
+
 
 - 邮箱密码/授权码、飞书 secret —— **只经 DPAPI 加密**存 `credentials.json`，**绝不落明文、绝不进仓库/二进制**。
 - `config/feishu.json`、`db/*.db`、`data/`、`release/` 均已 gitignore。
@@ -654,6 +707,8 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\FinanceSystem\backups\cleanup-20260911-0
 | 修正发票金额口径 | `tools/fix_invoice_amounts.py`（默认只读，`--apply` 才写） |
 | **补收历史发票**（水位线之外的邮件） | `tools/backfill_history_invoices.py`（默认只读；`--limit N --apply` 才写；**绝不改 `last_uid`**） |
 | 体检 OCR 识别质量 | `tools/audit_history_invoice_ocr.py`（只读，出 JSON 到 `logs/`） |
+| **数电票 XML/OFD 解析**（方案 B） | `modules/einvoice.py` —— 白名单单一来源 + XML/OFD 结构化解析；回归 `tests/test_einvoice_xml.py`。⚠️ XML/OFD **不走 OCR**，`invoice_doc.ocr_version` 记为 `einvoice-xml` / `einvoice-ofd-xml` |
+| 解析失败的附件去哪了 | `%LOCALAPPDATA%\FinanceSystem\invoices\failed\`（**绝不静默丢弃**，见 §10.4） |
 | **OCR 回归自检**（改了外部 OCR 后必跑） | `C:/tmp/ocr_venv2/Scripts/python.exe C:/Users/li1/invoice-agent/ocr_invoice.py --self-check "C:\Users\li1\fin-system\work\ocr_samples" --company-tax-no 91330105MACRGYRN32` ⚠️ **目录参数必须写 Windows 路径**；填 `/c/Users/...` 不报错但输出「样本 0 张」（静默假阴性）。基线：`样本 109 张：可入账 64 / 不可入账 45（其中无文本层 0）` |
 | **残留隔离区 / 还原** | `%LOCALAPPDATA%\FinanceSystem\backups\cleanup-20260911-0230\`（含 `manifest.json` + SHA256，可整体还原；见 §11） |
 | 清理后的 DB 快照 | `backups\finance-cleanup-20260911-0230.db`（清理前）／`backups\finance-delvoucher11-20260911-023402.db`（删凭证 11 前） |

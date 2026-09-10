@@ -51,6 +51,14 @@ TARGETS: dict[str, list[str]] = {
         "source_file",             # P6 新增关键字实参
         "register_invoice",         # 对照
     ],
+    "modules.einvoice": [
+        "parse_einvoice_xml",        # 方案 B：数电票 XML 结构化解析
+        "extract_ofd_invoice_xml",   # 方案 B：OFD 内嵌 XML 提取
+        "parse_einvoice_attachment", # 方案 B：按后缀分派
+        "TotalTax-includedAmount",   # 方案 B：顶层价税合计元素名常量
+        "einvoice-ofd-xml",          # 方案 B：来源标记（字符串常量）
+        "EinvoiceParseError",        # 对照：模块自定义异常
+    ],
 }
 
 ENTRY_TARGETS = ("self_check", "_write_self_check_report", "launch")

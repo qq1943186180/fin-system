@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""发票 OCR 探测：调用外部 OCR 命令并判定识别质量（只读，不写库）。
+"""发票探测：调用外部 OCR 命令 / 本地数电票解析，并判定识别质量（只读，不写库）。
 
 被两个工具复用：
 - ``tools/audit_history_invoice_ocr.py``（质量体检）
@@ -86,6 +86,10 @@ def classify(fields: dict, company_no: str = "") -> tuple[str, list[str]]:
     has_total = bool(str(fields.get("价税合计", "")).strip())
     has_net = bool(str(fields.get("金额合计", "")).strip())
     has_tax = bool(str(fields.get("税额合计", "")).strip())
+    # 不含税金额可由「价税合计 − 税额」推导，缺它不算缺陷
+    # （数电票 XML 解析在分位不自洽时会主动留空，交由入库端推导）
+    if not has_net and has_total and has_tax:
+        has_net = True
 
     if not has_no:
         issues.append("缺发票号码")
@@ -115,11 +119,30 @@ def probe_bytes(
 ) -> dict[str, Any]:
     """把附件字节落临时文件后探测。
 
+    数电票 XML/OFD 走本地结构化解析（不需要 OCR 子进程）；
+    PDF/图片才调用外部 OCR。
+
     返回 ``{filename, level, issues, fields, is_auxiliary}``。
     """
     import tempfile
 
+    from modules.einvoice import EINVOICE_EXTS, EinvoiceParseError, parse_einvoice_attachment
+
     suffix = Path(filename).suffix.lower() or ".bin"
+    if suffix in EINVOICE_EXTS:
+        try:
+            fields = parse_einvoice_attachment(data, suffix)
+        except EinvoiceParseError as exc:
+            fields = {"_error": str(exc)}
+        level, issues = classify(fields, company_no)
+        return {
+            "filename": filename,
+            "level": level,
+            "issues": issues,
+            "fields": fields,
+            "is_auxiliary": is_auxiliary(filename),
+        }
+
     tmp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, prefix="ocr_probe_", delete=False) as fh:

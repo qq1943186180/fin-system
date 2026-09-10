@@ -17,6 +17,7 @@ from typing import Any, Sequence
 
 from imap_tools import AND, MailBox
 
+from modules.einvoice import SUPPORTED_EXTS
 from modules.integration import IntegrationResult, IntegrationStatus
 
 from security import get_secret, set_secret
@@ -140,7 +141,7 @@ class MailBoxConfig:
         last_uid: int = 0,
         folder: str = "INBOX",
         subject_filter: str = "发票|电子发票|invoice",
-        allowed_ext: Sequence[str] = (".pdf", ".jpg", ".jpeg", ".png"),
+        allowed_ext: Sequence[str] = SUPPORTED_EXTS,
         smtp_host: str = "",
         smtp_port: int = 465,
         smtp_use_ssl: bool = True,
@@ -190,7 +191,7 @@ class MailBoxConfig:
             last_uid=int(d.get("last_uid", 0)),
             folder=str(d.get("folder", "INBOX")),
             subject_filter=str(d.get("subject_filter", "发票|电子发票|invoice")),
-            allowed_ext=list(d.get("allowed_ext", [".pdf", ".jpg", ".jpeg", ".png"])),
+            allowed_ext=list(d.get("allowed_ext", list(SUPPORTED_EXTS))),
             smtp_host=str(d.get("smtp_host", "")),
             smtp_port=int(d.get("smtp_port", 465)),
             smtp_use_ssl=bool(d.get("smtp_use_ssl", True)),

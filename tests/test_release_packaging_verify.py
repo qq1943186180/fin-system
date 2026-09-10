@@ -100,6 +100,20 @@ def test_targets_include_sentinel_symbols_from_p6() -> None:
         assert len(wanted) >= 2, module
 
 
+def test_targets_include_sentinel_symbols_from_einvoice_plan_b() -> None:
+    """回归本意：目标清单必须盯着方案 B（数电票 XML/OFD）引入的符号。"""
+    einvoice = vr.TARGETS.get("modules.einvoice")
+    assert einvoice, "方案 B 的模块必须进入打包校验清单"
+    for symbol in (
+        "parse_einvoice_xml",
+        "extract_ofd_invoice_xml",
+        "parse_einvoice_attachment",
+    ):
+        assert symbol in einvoice
+    # 字符串常量也要盯（来源标记是最容易"改了但没进包"的静默漂移）
+    assert "einvoice-ofd-xml" in einvoice
+
+
 def test_main_reports_missing_exe(tmp_path: Path, capsys) -> None:
     code = vr.main([str(tmp_path / "nope.exe"), str(tmp_path / "tmp")])
 
