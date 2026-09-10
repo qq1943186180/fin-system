@@ -128,7 +128,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 "C:/tmp/ocr_venv2/Scripts/python.exe" tools/acceptance_check.py  # 逐页 + 新模块冒烟
 ```
 
-- 当前基线：**pytest 41 passed** / 验收 **17 OK、0 FAIL**。
+- 当前基线：**pytest 52 passed** / 验收 **17 OK、0 FAIL**。（41 → 52 是 2026-09-10 新增 `tests/test_backup_retention.py` 的 11 例）
 - 打包后自检：`release\财务系统\财务系统.exe --self-check report=<路径> stderr=<路径>`（**不带参数跑是空输出、exit 0，属正常**；带参才写 `self-check.json`）。
 
 ---
@@ -174,7 +174,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 ## 10. 待办 / 明确不做
 
 - [ ] **「全部补收进来」**：163 历史发票补收（约 60 封）—— 前置修复已就绪，**尚未执行**（会真实连邮箱、真实写库）。
-- [ ] 🔴 **P1 备份保留策略偏短 + 备份失败静默**（`gui/main.py:355-391`）：`MAX_BACKUPS=5` + 每日一次 = 只回溯 5 天；且整函数 `except Exception: pass` → 备份失败用户无感。建议分层保留（7 日 + 4 周 + 6 月，或直接 30 份），失败写日志并复用 `issue_bar` 告警。**这是唯一涉及数据可恢复性的项。**
+- [x] ✅ **P1 备份缺陷（已修复，提交 `3d27438`）**：原 `gui/main.py` `_run_startup_backup()` 有两处真实缺陷 —— ①「今天是否已备份」用 `date.today().isoformat()`（`finance-2026-09-10`）去匹配备份文件名 `finance-20260910-...` 的 `%Y%m%d` 前缀，**永不相等**，使「每天首启一次」退化成「每次启动都备份」，叠加 `MAX_BACKUPS=5` 后同一天的多次启动把历史全滚掉（**生产库实测 5 份全是 9/10 同一天，等于实际没有保留策略**）；②整函数 `except Exception: pass`，备份失败用户无感。现已改为：正则精确匹配自动备份命名（迁移前备份不参与轮转）+ 分层保留（7 日 / 4 周 / 6 月，超期才淘汰）+ 失败记 `LOG.error` 并在设置页标红。详见 `docs/architecture-review-2026-09-10-followup.md` §2.1。
 - [ ] 🟡 **P2 `.gitignore` 纵深防御缺口**：只忽略了 `config/feishu.json`，而 `config/credentials.json`／`config/settings.json`／`config/*.blob` **都不被忽略**（`git check-ignore` 实测）。当前它们在 AppData 无泄露，但项目根已有 `config/` 目录，误放 + `git add .` 即进仓库。建议改为 `config/*.json` + `config/*.blob` + `!config/feishu.example.json`。
 - [ ] 🟡 **P3 `configure_dark_style` 命名与实现相反**（`gui/ui_theme.py:151`）：实为 `configure_light_style` 别名，配色全是浅色。名字会误导后人去「修」成深色——而深色风你已明确否决。建议重命名并删别名。
 - [ ] 🟢 **P4 依赖三处手工同步**（`pyproject.toml` / `build.ps1:224` / `spec.hiddenimports`）：无机器校验，PyInstaller 对缺失 hiddenimport 只发 WARNING → exe 静默缺库。建议在 `build.ps1` 加构建期一致性断言。
@@ -246,14 +246,27 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 | 待确认子集 | 5 张 ¥1,340.00 | 5 张 134,000 分 → **¥1,340.00** | ✅ |
 | 待审核子集 | 1 张 ¥96.83 | 1 张 9,683 分 → **¥96.83** | ✅ |
 | 邮箱状态 | 163 启用 / QQ 禁用 | 163 `enabled=true, last_uid=1691478373`；QQ `enabled=false` | ✅ |
-| pytest 基线 | 41 passed | **41 passed, 14 warnings in 4.07s** | ✅ |
+| pytest 基线 | 41 passed | 核验时 **41 passed**；修复 P1 后 **52 passed**（新增 11 例备份回归） | ✅ |
 | 验收基线 | 17 OK / 0 FAIL | **合计：17 OK / 0 FAIL**（11 个页面全构建成功） | ✅ |
-| git 状态 | 分支 master | `master`，工作区干净，HEAD = `8ae405a` | ✅ |
+| git 状态 | 分支 master | `master`，工作区干净；核验时 HEAD = `8ae405a`，P1 修复后 = `3d27438` | ✅ |
 | 用户喜好 | 源码/数据分离 | 结构确实分离；测试有 `.test-home` 隔离守卫（`conftest.py` 防写生产库） | ✅ |
 
 **复核中发现并已修正的文档错误**：目录树漏了 `closing/inventory/integration/ocr_invoice/page_closing/page_inventory/simhei.ttf` 与 3 个导航页；「最近提交」写的是 `99b397e`（实际 `8ae405a`）；第 8 节漏了外部 OCR 项目 `C:\Users\li1\invoice-agent`；第 9 节未注明「往来 2」是档案数。
 
 **顺手验证：`docs/architecture-review-2026-08-08.md` 列的 TOP 5 技术债已全部关闭** —— TD-1（`C_PANEL` NameError）、TD-2（无 git）、TD-3（构建流水线断裂，含 spec 入口 / 依赖声明 / self_check 清单三处）、TD-4（无自动备份）、TD-5（邮件收票 4 个缺陷）逐项对照源码确认已修。增量发现与「不建议做」清单见 `docs/architecture-review-2026-09-10-followup.md`。
+
+**P1 备份缺陷修复复核（2026-09-10 晚，提交 `3d27438`）**：
+
+| 核验项 | 实测 | 结论 |
+|---|---|---|
+| 缺陷坐实 | `%LOCALAPPDATA%\FinanceSystem\backups\` 下 5 份备份**全部**为 `finance-20260910-*`（22:22/22:26/22:28/22:30/22:32，同一天 5 次启动） | ⚠️ 原「5 天窗口」实为「最近 5 次启动」，**无保留策略** |
+| 根因 | 判定值 `date.today().isoformat()` = `finance-2026-09-10`；文件名 = `finance-20260910-...` → 前缀恒不匹配 | ✅ 已定位 |
+| 修复后测试 | `tests/test_backup_retention.py` 11 例全绿（正则不误伤迁移备份 / 一天一份 / 失败可见 / 分层保留 / 周桶去重 / 空目录安全） | ✅ |
+| 质量门禁 | `ocr_venv2` 解释器实跑：pytest **52 passed**、acceptance **17 OK / 0 FAIL** | ✅ |
+| 生产库未受影响 | 修复前后 `mode=ro` 统计均为 46 科目 / 13 凭证 / 6 发票（价税合计 `total_cents`=143,683 → ¥1,436.83） | ✅ |
+| 迁移前备份受保护 | `finance-pre-*.db` 与 `source-pre-upgrade-*.zip` 不匹配新正则 → 不参与轮转删除 | ✅ |
+
+> 注：现存那 5 份同日备份，在**下次启动程序**时会被新策略收敛为 1 份（同一天只留最新）。这是预期行为，不是数据丢失 —— 它们内容完全相同（同为当日账套快照）。
 
 **遗留风险（未修，仅记录）**：
 1. `company` 表全空 → 报表抬头公司名为空。
