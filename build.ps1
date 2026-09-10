@@ -170,9 +170,14 @@ function Publish-ReleaseAtomically {
     }
     if (Test-Path -LiteralPath $Previous) {
         try {
-            Remove-Item -LiteralPath $Previous -Recurse -Force
+            Remove-Item -LiteralPath $Previous -Recurse -Force -ErrorAction Stop
         } catch {
-            Write-Warning "New release is active, but the previous release could not be removed: $Previous"
+            # Deleting a few hundred files in one call can be blocked by endpoint
+            # protection on some machines.  The new release is already live, so this
+            # is not a build failure - but say exactly what to do about it.
+            Write-Warning ("New release is live, but the previous release copy could not be removed:`n" +
+                "  $Previous`n  $($_.Exception.Message)`n" +
+                "Remove it manually when convenient; it only occupies disk space.")
         }
     }
 }
@@ -202,6 +207,145 @@ function Update-ShortcutAtomically {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Dependency parity gate
+#
+# Adding a third-party runtime dependency requires editing THREE places:
+#   1) pyproject.toml           -> [project].dependencies
+#   2) this script              -> $RuntimePackages installed in step [2/6]
+#   3) <product>.spec           -> hiddenimports
+#
+# This script never read pyproject.toml, and PyInstaller only emits a WARNING
+# for a missing hiddenimport.  The build therefore "succeeds" while the frozen
+# exe raises ImportError as soon as that feature is opened (seen with
+# openpyxl / fpdf2 used by report export).  The gate below turns "keep the
+# three lists in sync" from human memory into a build-time stop: any drift
+# aborts at step [2/6] instead of shipping a silently broken bundle.
+# ---------------------------------------------------------------------------
+
+# pip distribution name -> import name, when the two differ.
+# Default is the PEP 503 normalisation of the distribution name (lowercase,
+# '-' and '.' to '_').  Add an entry when a package installs fine but fails
+# to import.
+$script:DependencyImportNames = @{
+    "fpdf2" = "fpdf"        # pip installs fpdf2, code does `import fpdf`
+}
+
+function ConvertTo-ImportName {
+    param([Parameter(Mandatory = $true)][string]$PackageName)
+
+    # Strip version specifiers / extras / environment markers:
+    #   "fpdf2>=2.7" -> "fpdf2" ; "foo[bar]" -> "foo" ; "foo; python_version<\"3.12\"" -> "foo"
+    $bare = ($PackageName -split '[<>=!~;\[]')[0].Trim()
+    if ([string]::IsNullOrWhiteSpace($bare)) {
+        throw "Dependency entry has no package name: '$PackageName'"
+    }
+    $key = $bare.ToLowerInvariant()
+    if ($script:DependencyImportNames.ContainsKey($key)) {
+        return $script:DependencyImportNames[$key]
+    }
+    return ($key -replace '[-.]', '_')
+}
+
+function Get-DeclaredImportNames {
+    $tomlPath = Join-Path $ProjectRoot "pyproject.toml"
+    if (-not (Test-Path -LiteralPath $tomlPath -PathType Leaf)) {
+        throw "pyproject.toml not found: $tomlPath"
+    }
+    $text = Get-Content -Raw -LiteralPath $tomlPath -Encoding UTF8
+    $block = [regex]::Match($text, '(?ms)^\s*dependencies\s*=\s*\[(.*?)\]')
+    if (-not $block.Success) {
+        throw "[project].dependencies was not found in $tomlPath"
+    }
+    $names = @(
+        [regex]::Matches($block.Groups[1].Value, '"([^"]+)"') |
+            ForEach-Object { ConvertTo-ImportName $_.Groups[1].Value }
+    )
+    if ($names.Count -eq 0) {
+        throw "No runtime dependencies declared in $tomlPath"
+    }
+    return $names
+}
+
+function Get-SpecHiddenImports {
+    $specPath = Join-Path $ProjectRoot "$ReleaseName.spec"
+    if (-not (Test-Path -LiteralPath $specPath -PathType Leaf)) {
+        throw "PyInstaller spec not found: $specPath"
+    }
+    $text = Get-Content -Raw -LiteralPath $specPath -Encoding UTF8
+    $block = [regex]::Match($text, '(?ms)hiddenimports\s*=\s*\[(.*?)\]')
+    if (-not $block.Success) {
+        throw "hiddenimports was not found in $specPath"
+    }
+    return @(
+        [regex]::Matches($block.Groups[1].Value, "['""]([^'""]+)['""]") |
+            ForEach-Object { $_.Groups[1].Value }
+    )
+}
+
+function Assert-DependencyParity {
+    param(
+        [Parameter(Mandatory = $true)][string]$BuildPython,
+        [Parameter(Mandatory = $true)][string[]]$InstalledPackages
+    )
+
+    $declared = @(Get-DeclaredImportNames)
+    $installed = @($InstalledPackages | ForEach-Object { ConvertTo-ImportName $_ })
+    $hidden = @(Get-SpecHiddenImports)
+
+    $problems = New-Object System.Collections.Generic.List[string]
+
+    # (a) build script list must equal pyproject.toml
+    foreach ($name in $declared) {
+        if ($installed -notcontains $name) {
+            $problems.Add("declared in pyproject.toml but NOT installed by this script: $name")
+        }
+    }
+    foreach ($name in $installed) {
+        if ($declared -notcontains $name) {
+            $problems.Add("installed by this script but NOT declared in pyproject.toml: $name")
+        }
+    }
+
+    # (b) every declared dependency must be present in spec hiddenimports
+    foreach ($name in $declared) {
+        if ($hidden -notcontains $name) {
+            $problems.Add("declared dependency missing from $ReleaseName.spec hiddenimports: $name")
+        }
+    }
+
+    if ($problems.Count -gt 0) {
+        throw ("Dependency parity check failed - the three lists drifted:`n  - " +
+            ($problems -join "`n  - ") +
+            "`nFix pyproject.toml / build.ps1 / $ReleaseName.spec together, then rebuild.")
+    }
+
+    # (c) prove each dependency actually imports inside the build venv.
+    # A wrong distribution->import mapping shows up here rather than in the exe.
+    foreach ($name in $declared) {
+        $importOutput = & $BuildPython -c "import $name" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw ("Dependency '$name' cannot be imported by the build interpreter: " +
+                ($importOutput -join ' ') +
+                "`nIf its pip name differs from its import name, add the mapping to " +
+                "`$script:DependencyImportNames in build.ps1 and to hiddenimports in $ReleaseName.spec.")
+        }
+    }
+
+    # (d) reverse check, warning only: something shipped via hiddenimports that
+    # neither pyproject.toml nor the project's own packages account for.  Stdlib
+    # and submodules (urllib.request, sqlite3, modules.*, gui.*) are expected.
+    $expectedStdlib = @("sqlite3", "urllib", "urllib.request", "urllib.error", "ctypes", "json", "os", "sys")
+    foreach ($name in $hidden) {
+        if ($declared -contains $name) { continue }
+        if ($name -like "modules.*" -or $name -like "gui.*" -or $name -like "db.*") { continue }
+        if ($expectedStdlib -contains $name) { continue }
+        Write-Warning "hiddenimports lists '$name', which no pyproject.toml dependency accounts for. Confirm it is a stdlib/submodule, or declare it."
+    }
+
+    Write-Host ("      dependency parity OK: " + ($declared -join ", "))
+}
+
 $Python = Resolve-Python311 -ExplicitPath $PythonPath
 New-Item -ItemType Directory -Force -Path $TempRoot | Out-Null
 
@@ -221,8 +365,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Installing pinned build dependencies failed." }
 
     Write-Host "[2/6] Installing project runtime dependencies..."
-    & $BuildPython -m pip install --disable-pip-version-check --no-input "imap_tools" "pystray" "openpyxl" "fpdf2"
+    # Keep this list explicit (not parsed from pyproject.toml) so the build is
+    # readable on its own; Assert-DependencyParity then proves the three places
+    # agree before anything is frozen.
+    $RuntimePackages = @("imap_tools", "pystray", "openpyxl", "fpdf2")
+    & $BuildPython -m pip install --disable-pip-version-check --no-input @RuntimePackages
     if ($LASTEXITCODE -ne 0) { throw "Installing project runtime dependencies failed." }
+    Assert-DependencyParity -BuildPython $BuildPython -InstalledPackages $RuntimePackages
 
     Write-Host "[3/6] Building the relative onedir bundle..."
     $oldHashSeed = $env:PYTHONHASHSEED
@@ -305,11 +454,20 @@ try {
 
     Write-Host "Release ready: $ReleaseDir"
 } finally {
+    # Cleanup must never decide the build's exit code: by the time we get here the
+    # release has either been published or the failure was already reported above.
+    # Deleting the scratch tree means removing thousands of files in one call, which
+    # endpoint protection may block - that used to surface as "build failed" even
+    # though the release was live and verified.
     Assert-SafeChildPath -Parent ([IO.Path]::GetTempPath()) -Child $TempRoot
-    if (Test-Path -LiteralPath $TempRoot) {
-        Remove-Item -LiteralPath $TempRoot -Recurse -Force
-    }
-    if (Test-Path -LiteralPath $Incoming) {
-        Remove-Item -LiteralPath $Incoming -Recurse -Force
+    foreach ($leftover in @($TempRoot, $Incoming)) {
+        if (-not (Test-Path -LiteralPath $leftover)) { continue }
+        try {
+            Remove-Item -LiteralPath $leftover -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Warning ("Build scratch directory could not be removed: $leftover`n" +
+                "  $($_.Exception.Message)`n" +
+                "It is safe to delete manually; the published release is unaffected.")
+        }
     }
 }
