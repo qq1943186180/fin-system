@@ -208,6 +208,13 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
   金额抽取改六级优先级（含**大写金额校正**），买卖方按**版面区域**配对（不再按出现顺序）。
   新增 `--self-check <DIR>` 自检与 `--company-tax-no` 可选锚点；CLI 契约不变。
   回归基线：`work/ocr_samples/`（109 个真实附件 + `baseline.json`），**零回退**（老版能过的 17 张数值一致）。
+- [ ] 🟡 **P10：换数据源 + 支持 XML/OFD（方案已出，待决策）** —— 评估文档 `docs/invoice-ocr-options-2026-09-11.md`。
+  - **核心判断**：瓶颈**不是 OCR 精度**（PDF 场景已 100%），而是**数据源**。110 个附件中 109 个 PDF **全部有文本层**，PDF 兜底 OCR 从未触发 → 继续调 OCR 引擎边际收益 ≈ 0。
+  - **方案 A（首选）**：改从**税局「税务数字账户 → 全量发票查询 → 取得发票」**取数 —— ① 导出 Excel（含明细行）当**权威真值** ② 批量下载 **XML/OFD/PDF** 当**法定归档件**。邮箱链路职责降级为「归集附件」。⚠️ 只能下载数电票的 XML/OFD（老式税控发票下不了），但 Excel 导出覆盖全部。
+  - **方案 B（🔴 合规刚需）**：白名单 `modules/mail_processor.py:66` / `tools/backfill_history_invoices.py:146` 目前只认 `{.pdf,.jpg,.jpeg,.png}`，**XML/OFD 静默丢弃**（无日志无提示）。而财会〔2020〕6号 + 财政部官方口径明确：**PDF/OFD 是预览件，含数字签名的 XML 才是符合入账要求的格式**。现状只归档 PDF，对数电票**不合规**。
+  - **方案 C（可做不急）**：PaddleOCR → RapidOCR（~2GB → ~50–200MB，CPU 快 3–4×，模型同源）。因为几乎不触发，属"减依赖"而非"提精度"。
+  - **方案 D（A 的必然搭配）**：税局 Excel 真值 ↔ `invoice_doc` 台账**双向对账**（漏票 / 多票 / 金额不符 / 重复）。
+  - **需哥哥做的第一步**：登录税局导出「取得发票」Excel（2023-01 ~ 2026-09）丢进 `work/`，后续对账脚本我来写（只读）。
 - [x] ✅ **P1 备份缺陷（已修复，提交 `3d27438`）**：原 `gui/main.py` `_run_startup_backup()` 有两处真实缺陷 —— ①「今天是否已备份」用 `date.today().isoformat()`（`finance-2026-09-10`）去匹配备份文件名 `finance-20260910-...` 的 `%Y%m%d` 前缀，**永不相等**，使「每天首启一次」退化成「每次启动都备份」，叠加 `MAX_BACKUPS=5` 后同一天的多次启动把历史全滚掉（**生产库实测 5 份全是 9/10 同一天，等于实际没有保留策略**）；②整函数 `except Exception: pass`，备份失败用户无感。现已改为：正则精确匹配自动备份命名（迁移前备份不参与轮转）+ 分层保留（7 日 / 4 周 / 6 月，超期才淘汰）+ 失败记 `LOG.error` 并在设置页标红。详见 `docs/architecture-review-2026-09-10-followup.md` §2.1。
 - [x] ✅ **P2 `.gitignore` 纵深防御缺口（已修复，提交 `d75c8d2`）**：原只忽略 `config/feishu.json`，而 `config/credentials.json`（全部密钥的仓库）／`config/settings.json`／`config/*.blob` **都不被忽略**（`git check-ignore` 实测）。已改为按类型覆盖 `config/*.json` + `config/*.blob` + `!config/feishu.example.json` + `db/*.db`——**以后新增的配置文件默认安全**。注意规则写 `config/*.json` 而非 `config/`：忽略整个目录会让 `!` 放行规则失效。回归测试 `tests/test_repo_hygiene.py`（10 例，真实调用 `git check-ignore`）；旧规则下 5 例失败，新规则全绿。
 - [x] ✅ **P3 `configure_dark_style` 命名与实现相反（已修复，提交 `1051a1b`）**：该别名实为 `configure_light_style`（`gui/ui_theme.py:151`），配色全浅色，会误导后人去「修」成深色（而深色风已明确否决）。已删除别名并把 `gui/main.py` 两处调用点、三个页面里未使用的 import 全部改名。回归测试 `tests/test_ui_theme.py`（13 例，含真实 Tk 断言实际生效主题为 `clam`）；把主题优先级改成 `vista` 优先可复现失败。
