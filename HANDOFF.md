@@ -174,12 +174,22 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 ## 10. 待办 / 明确不做
 
 - [ ] **「全部补收进来」**：163 历史发票补收（约 60 封）—— 前置修复已就绪，**尚未执行**（会真实连邮箱、真实写库）。
+- [ ] 🔴 **P1 备份保留策略偏短 + 备份失败静默**（`gui/main.py:355-391`）：`MAX_BACKUPS=5` + 每日一次 = 只回溯 5 天；且整函数 `except Exception: pass` → 备份失败用户无感。建议分层保留（7 日 + 4 周 + 6 月，或直接 30 份），失败写日志并复用 `issue_bar` 告警。**这是唯一涉及数据可恢复性的项。**
+- [ ] 🟡 **P2 `.gitignore` 纵深防御缺口**：只忽略了 `config/feishu.json`，而 `config/credentials.json`／`config/settings.json`／`config/*.blob` **都不被忽略**（`git check-ignore` 实测）。当前它们在 AppData 无泄露，但项目根已有 `config/` 目录，误放 + `git add .` 即进仓库。建议改为 `config/*.json` + `config/*.blob` + `!config/feishu.example.json`。
+- [ ] 🟡 **P3 `configure_dark_style` 命名与实现相反**（`gui/ui_theme.py:151`）：实为 `configure_light_style` 别名，配色全是浅色。名字会误导后人去「修」成深色——而深色风你已明确否决。建议重命名并删别名。
+- [ ] 🟢 **P4 依赖三处手工同步**（`pyproject.toml` / `build.ps1:224` / `spec.hiddenimports`）：无机器校验，PyInstaller 对缺失 hiddenimport 只发 WARNING → exe 静默缺库。建议在 `build.ps1` 加构建期一致性断言。
 - [ ] **账套公司信息未填**：`company` 表 1 行但 `name / tax_no / addr / note` 全为空 → 报表抬头公司名会是空的，建议先补。
-- [ ] **`partner.type` 取值中英混用**：现为中文「客户」与英文 `supplier` 各一条，筛选/报表口径不统一，建议统一枚举。
-- [ ] 测试残留数据清理：`invoices\failed\` 6 个 PDF（含 3 个 `failed_invoice_*.pdf` 早期样本）、3 条 `test data cleanup` 冲销凭证。
-- [ ] 发票补关联：把 `invoices\failed\` 里 OCR 已成功的 PDF 回填到 `invoice_doc.file_path`。
+- [ ] 发票补关联：把 `invoices\failed\` 里 OCR 已成功的 PDF 回填到 `invoice_doc.file_path`（现 6 张发票的 `file_path`/`file_hash` 均为空串）。
+- [ ] 测试残留数据清理：`invoices\failed\` 6 个 PDF（含 3 个 `failed_invoice_*.pdf` 早期样本）、3 条 `test data cleanup` 冲销凭证。**清理前先确认清单。**
+- [ ] 可选小清理：`config/feishu.app_secret.blob`（旧版孤儿文件，当前代码无 `.blob` 读写）、`release/frozen-self-check.json`（7/11 旧文件）、`settings.json` 与 `feishu.json` 里重复的飞书配置段。
+- ℹ️ `partner.type` 中英混用（中文「客户」+ 英文 `supplier`）：**代码已用 `type IN (?,?)` 兼容，非 bug**，新数据由 `add_partner` 自动归一化。可不处理。
 - ❌ 报税/税务申报：明确**不做**。
 - ❌ 多账套切换：明确**不做**（单公司账套）。
+
+> 架构层面的完整体检见 `docs/architecture-review-2026-08-08.md`（基准）与
+> `docs/architecture-review-2026-09-10-followup.md`（核验 + 增量）。
+> 前者的 TOP 5 技术债**现已全部关闭**；后者明确列出「不建议做」的事项（拆 main.py / 引 ORM / 补 CI 等），避免过度工程。
+
 
 ---
 
@@ -243,9 +253,11 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 
 **复核中发现并已修正的文档错误**：目录树漏了 `closing/inventory/integration/ocr_invoice/page_closing/page_inventory/simhei.ttf` 与 3 个导航页；「最近提交」写的是 `99b397e`（实际 `8ae405a`）；第 8 节漏了外部 OCR 项目 `C:\Users\li1\invoice-agent`；第 9 节未注明「往来 2」是档案数。
 
+**顺手验证：`docs/architecture-review-2026-08-08.md` 列的 TOP 5 技术债已全部关闭** —— TD-1（`C_PANEL` NameError）、TD-2（无 git）、TD-3（构建流水线断裂，含 spec 入口 / 依赖声明 / self_check 清单三处）、TD-4（无自动备份）、TD-5（邮件收票 4 个缺陷）逐项对照源码确认已修。增量发现与「不建议做」清单见 `docs/architecture-review-2026-09-10-followup.md`。
+
 **遗留风险（未修，仅记录）**：
 1. `company` 表全空 → 报表抬头公司名为空。
-2. `partner.type` 中文「客户」/ 英文 `supplier` 混用。
+2. `partner.type` 中文「客户」/ 英文 `supplier` 混用（**代码已兼容 `type IN (?,?)`，非 bug**）。
 3. 6 张发票 `file_path` 空 → 与原始 PDF 无关联。
 4. `invoices\failed\` 6 个 PDF + 3 条 `test data cleanup` 冲销凭证属测试残留。
 5. `release\frozen-self-check.json` 是 2026-07-11 的旧文件（`logs\` 下另有一份）。
