@@ -272,10 +272,28 @@ def fetch_attachments(config: MailBoxConfig, *, mark_seen: bool = False) -> Inte
 
     result_list: list[dict[str, Any]] = []
     try:
-        with MailBox(config.imap_host, config.imap_port, ssl=config.use_ssl) as mailbox:
-            mailbox.login(config.username, password)
+        if config.use_ssl:
+            mailbox_ctx = MailBox(config.imap_host, config.imap_port)
+        else:
+            from imap_tools import MailBoxUnencrypted
+            mailbox_ctx = MailBoxUnencrypted(config.imap_host, config.imap_port)
+        with mailbox_ctx as mailbox:
+            # 注意：imap-tools 的 login() 默认 initial_folder='INBOX' 会立刻 SELECT，
+            # 而 163/QQ 风控要求 SELECT 之前先发 IMAP ID（RFC 2971），
+            # 所以必须传 initial_folder=None，先发 ID 再手动选文件夹。
+            mailbox.login(config.username, password, initial_folder=None)
+            try:
+                mailbox.client.xatom(
+                    "ID",
+                    '("name" "FinanceSystem" "version" "1.0" "vendor" "FinanceSystem")',
+                )
+            except Exception:
+                LOG.debug("IMAP ID 命令不被服务器支持，忽略")
             mailbox.folder.set(config.folder)
-            criteria = AND(uid=[config.last_uid + 1, "ALL"]) if config.last_uid else AND(all=True)
+            if config.last_uid > 0:
+                criteria = AND(uid=f"{config.last_uid + 1}:*")
+            else:
+                criteria = AND(all=True)
             for msg in mailbox.fetch(criteria, mark_seen=mark_seen):
                 # 发件人白名单
                 if not _match_sender(msg.from_, config.sender_whitelist):
@@ -314,8 +332,13 @@ def fetch_attachments(config: MailBoxConfig, *, mark_seen: bool = False) -> Inte
                     except Exception:
                         LOG.exception("提取附件失败: %s", fname)
                 # 更新 last_uid（即使没有附件也前进，避免重复遍历）
-                if msg.uid and msg.uid > config.last_uid:
-                    config.last_uid = msg.uid
+                if msg.uid is not None:
+                    try:
+                        uid_int = int(msg.uid)
+                    except (TypeError, ValueError):
+                        uid_int = None
+                    if uid_int is not None and uid_int > config.last_uid:
+                        config.last_uid = uid_int
     except imaplib.IMAP4.error as exc:
         return IntegrationResult(
             IntegrationStatus.BUSINESS_REJECTED,
@@ -327,6 +350,14 @@ def fetch_attachments(config: MailBoxConfig, *, mark_seen: bool = False) -> Inte
             f"连接邮箱失败: {exc}",
         )
     except Exception as exc:
+        if result_list:
+            # 收集中途出错但已有附件：保留已收集结果，不丢票
+            LOG.exception("收件中途异常（保留已获取的 %d 个附件）", len(result_list))
+            return IntegrationResult(
+                IntegrationStatus.SUCCESS,
+                f"获取 {len(result_list)} 个附件（中途异常: {exc}）。",
+                result_list,
+            )
         return IntegrationResult(
             IntegrationStatus.RETRYABLE_ERROR,
             f"收件异常: {exc}",
