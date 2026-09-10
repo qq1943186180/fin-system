@@ -131,9 +131,26 @@ function Write-HashManifest {
     [IO.File]::WriteAllLines($manifest, $lines, [Text.UTF8Encoding]::new($false))
 }
 
+function Stop-PublishedRelease {
+    # A running copy of the published app keeps a handle on the release folder,
+    # so the atomic swap below fails with "another process is using this file".
+    # Stop any instance launched from under the publish root before swapping.
+    $targets = @(Get-Process -Name $ReleaseName -ErrorAction SilentlyContinue |
+        Where-Object {
+            try { $_.Path -and $_.Path.StartsWith($PublishRoot, [StringComparison]::OrdinalIgnoreCase) }
+            catch { $false }
+        })
+    foreach ($proc in $targets) {
+        Write-Warning "Stopping running release process (PID $($proc.Id)) to free the publish directory."
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
+    if ($targets.Count -gt 0) { Start-Sleep -Milliseconds 1000 }
+}
+
 function Publish-ReleaseAtomically {
     param([string]$SourceDirectory)
     New-Item -ItemType Directory -Force -Path $PublishRoot | Out-Null
+    Stop-PublishedRelease
     Assert-SafeChildPath -Parent $PublishRoot -Child $Incoming
     Assert-SafeChildPath -Parent $PublishRoot -Child $Previous
     Assert-SafeChildPath -Parent $PublishRoot -Child $ReleaseDir

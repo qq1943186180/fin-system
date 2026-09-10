@@ -24,8 +24,8 @@ C_NAV_TEXT = "#6b7280"     # sidebar inactive text
 C_NAV_TEXT_ACTIVE = "#1d4ed8"  # sidebar active text (blue)
 
 C_TEXT = "#111827"         # primary text (near black)
-C_TEXT_MUTED = "#6b7280"   # secondary / hint text
-C_TEXT_DIM = "#9ca3af"     # very dim text
+C_TEXT_MUTED = "#4b5563"   # secondary / hint text (darkened for contrast on white)
+C_TEXT_DIM = "#6b7280"     # very dim text
 
 C_ACCENT = "#2563eb"       # primary action blue
 C_ACCENT_HOVER = "#1d4ed8"
@@ -95,10 +95,11 @@ def configure_light_style(root: tk.Tk) -> None:
                     borderwidth=0,
                     rowheight=28)
     style.configure("Treeview.Heading",
-                    background=C_BG,
-                    foreground=C_TEXT_MUTED,
-                    font=FONT_SMALL,
-                    borderwidth=0)
+                    background="#eef2f7",
+                    foreground=C_TEXT,
+                    font=FONT,
+                    borderwidth=0,
+                    padding=(6, 4))
     style.map("Treeview",
               background=[("selected", C_ACCENT_SOFT)],
               foreground=[("selected", C_ACCENT)])

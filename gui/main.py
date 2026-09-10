@@ -234,7 +234,7 @@ class FinanceApp:
         screen_w, screen_h = root.winfo_screenwidth(), root.winfo_screenheight()
         width, height = min(1220, max(900, screen_w - 48)), min(760, max(590, screen_h - 80))
         root.geometry(f"{width}x{height}+{max(0, (screen_w-width)//2)}+{max(0, (screen_h-height)//3)}")
-        root.minsize(min(960, width), min(600, height))
+        root.minsize(min(1180, width), min(700, height))
         root.configure(bg=C_BG)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._start_tray()
@@ -567,7 +567,7 @@ class FinanceApp:
         wrapper.grid_columnconfigure(0, weight=1)
         for key, label, width, anchor in columns:
             tree.heading(key, text=label)
-            tree.column(key, width=width, minwidth=min(width, 60), anchor=anchor, stretch=True)
+            tree.column(key, width=width, minwidth=width, anchor=anchor, stretch=True)
         return tree
 
     def _period_values(self) -> list[str]:
