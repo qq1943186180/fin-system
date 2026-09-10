@@ -30,6 +30,7 @@ C_TEXT_DIM = "#6b7280"     # very dim text
 C_ACCENT = "#2563eb"       # primary action blue
 C_ACCENT_HOVER = "#1d4ed8"
 C_ACCENT_SOFT = "#dbeafe"  # soft accent background
+C_ROW_ALT = "#f5f8fc"      # alternating table row background (zebra)
 
 C_OK = "#16a34a"
 C_OK_SOFT = "#dcfce7"
@@ -93,7 +94,7 @@ def configure_light_style(root: tk.Tk) -> None:
                     foreground=C_TEXT,
                     fieldbackground=C_CARD,
                     borderwidth=0,
-                    rowheight=28)
+                    rowheight=30)
     style.configure("Treeview.Heading",
                     background="#eef2f7",
                     foreground=C_TEXT,

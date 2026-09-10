@@ -29,6 +29,7 @@ from gui.ui_theme import (
     C_NAV_HOVER, C_NAV_TEXT, C_NAV_TEXT_ACTIVE,
     C_TEXT, C_TEXT_MUTED, C_TEXT_DIM,
     C_ACCENT, C_ACCENT_HOVER, C_ACCENT_SOFT,
+    C_ROW_ALT,
     C_OK, C_OK_SOFT, C_WARN, C_WARN_SOFT, C_DANGER, C_DANGER_SOFT,
     C_INPUT_BG, C_INPUT_FG, C_INPUT_BORDER,
     FONT, FONT_SMALL, FONT_B, FONT_TITLE, FONT_H2, FONT_H3, FONT_NUM, FONT_MONO,
@@ -205,6 +206,36 @@ def _table_columns(conn, table: str) -> set[str]:
     if not _table_exists(conn, table):
         return set()
     return {row[1] for row in conn.execute('PRAGMA table_info("%s")' % table)}
+
+
+class _ZebraTree(ttk.Treeview):
+    """Treeview with alternating row backgrounds, keeping the selection visible.
+
+    ttk paints a tag's ``background`` *over* the style's ``selected`` state, so a
+    naive zebra tag would make the selected row look unselected.  We therefore
+    drive a dedicated ``sel`` tag on every selection change.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tag_configure("even", background=C_CARD)
+        self.tag_configure("odd", background=C_ROW_ALT)
+        self.tag_configure("sel", background=C_ACCENT_SOFT, foreground=C_ACCENT)
+        self.bind("<<TreeviewSelect>>", self._refresh_selection, add="+")
+
+    def insert(self, parent, index, *args, **kwargs):
+        parity = "odd" if len(self.get_children(parent)) % 2 == 1 else "even"
+        tags = [parity, *list(kwargs.get("tags") or ())]
+        kwargs["tags"] = tags
+        return super().insert(parent, index, *args, **kwargs)
+
+    def _refresh_selection(self, _event=None) -> None:
+        selected = set(self.selection())
+        for iid in self.get_children(""):
+            tags = [t for t in self.item(iid, "tags") if t != "sel"]
+            if iid in selected:
+                tags.append("sel")
+            self.item(iid, tags=tags)
 
 
 class FinanceApp:
@@ -556,7 +587,7 @@ class FinanceApp:
     def _tree(self, parent, columns, *, height=12, selectmode="browse") -> ttk.Treeview:
         wrapper = tk.Frame(parent, bg=C_CARD)
         wrapper.pack(fill="both", expand=True)
-        tree = ttk.Treeview(wrapper, columns=[item[0] for item in columns], show="headings", height=height, selectmode=selectmode)
+        tree = _ZebraTree(wrapper, columns=[item[0] for item in columns], show="headings", height=height, selectmode=selectmode)
         ybar = ttk.Scrollbar(wrapper, orient="vertical", command=tree.yview)
         xbar = ttk.Scrollbar(wrapper, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
