@@ -63,7 +63,23 @@ TARGETS: dict[str, list[str]] = {
         "effective_config",          # 飞书修复：合并后的生效配置（设置页据此初始化勾选框）
         "build_settings_section",    # 飞书修复：保存时由它组装 settings.json 的 feishu 段
         "allow_self_approval",       # 飞书修复：不得被硬写 False 的那个键
+        "sync_approval_status",      # 飞书同步修复（2026-09-26）：状态字面量回归点
+        "~pending_approval",         # 飞书同步修复：英文状态字面量，嵌在长 SQL 串里 → 子串匹配
         "validate_config",           # 对照：既有函数
+    ],
+    "db": [
+        "_migration_6",              # 补 expense.instance_code 列（2026-09-26）
+        "expense_feishu_instance_code",  # migration 6 的注册名（字符串常量）
+        "_add_column",               # 对照：既有幂等 ALTER 助手
+    ],
+    "modules.feishu_pull": [
+        "fetch_feishu_expenses",     # 从飞书拉取报销单（2026-09-26）
+        "_parse_form",               # 解析飞书 form
+        "_parse_detail_rows",        # 解析 fieldList 二维数组
+        "_resolve_employee",         # 员工自动建档
+        "_create_local_expense",     # 本地建单
+        "expense_pulled_from_feishu",  # 审计事件名（字符串常量）
+        "already_imported",          # 幂等跳过原因（字符串常量）
     ],
     "gui.main": [
         "feishu_allow_self_var",     # 飞书修复：勾选框变量名（已进 co_varnames）
@@ -99,6 +115,20 @@ def module_symbols(zar, name: str) -> set | None:
     return collect(code, set())
 
 
+def _hit(sym: str, syms: set) -> bool:
+    """符号是否命中。
+
+    默认精确匹配。符号前缀 ``~`` 表示**子串匹配**：用于那些天然嵌在更长
+    字符串常量里的东西（例如拼在一条长 SQL 里的状态字面量
+    ``"SELECT ... WHERE status IN ('pending_approval', ...)"``）。
+    这类符号永远不可能作为独立常量出现，精确匹配会稳定假阴性。
+    """
+    if sym.startswith("~"):
+        needle = sym[1:]
+        return any(needle in s for s in syms)
+    return sym in syms
+
+
 def check(exe: Path, tmp_dir: Path, out=print) -> list[str]:
     """返回缺失符号列表（空 = 全部命中）。"""
     from PyInstaller.archive.readers import CArchiveReader, ZlibArchiveReader
@@ -128,7 +158,7 @@ def check(exe: Path, tmp_dir: Path, out=print) -> list[str]:
             continue
         out("[%s]" % module)
         for sym in wanted:
-            found = sym in syms
+            found = _hit(sym, syms)
             out("    %-28s %s" % (sym, "FOUND" if found else "MISSING"))
             if not found:
                 missing.append("%s.%s" % (module, sym))

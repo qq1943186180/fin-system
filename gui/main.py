@@ -24,7 +24,7 @@ import uuid
 
 import db
 from logging_setup import get_logger
-from modules import arap, expense as expense_mod, feishu, invoice_gui, ledger, reports
+from modules import arap, expense as expense_mod, feishu, feishu_pull, invoice_gui, ledger, reports
 from gui.ui_theme import (
     C_BG, C_CARD, C_CARD_HOVER, C_BORDER, C_NAV, C_NAV_ACTIVE,
     C_NAV_HOVER, C_NAV_TEXT, C_NAV_TEXT_ACTIVE,
@@ -1399,21 +1399,6 @@ class FinanceApp:
             messagebox.showinfo("审核结果", message, parent=self.root)
             refresh()
 
-        def send_feishu():
-            row = current()
-            if not row:
-                messagebox.showwarning("请选择报销单", "请先选择一张报销单。", parent=self.root)
-                return
-            try:
-                ok, message, _data = _result(feishu.submit_expense_approval(row))
-                if not ok:
-                    raise ValueError(message)
-            except Exception as exc:
-                messagebox.showerror("提交飞书失败", str(exc), parent=self.root)
-                return
-            messagebox.showinfo("飞书审批", message, parent=self.root)
-            refresh()
-
         def sync_feishu():
             try:
                 ok, message, _data = _result(feishu.sync_approval_status())
@@ -1425,10 +1410,73 @@ class FinanceApp:
             messagebox.showinfo("飞书审批", message, parent=self.root)
             refresh()
 
+        def pull_feishu():
+            """员工在飞书自助提单后，把单子拉回本地建账。"""
+            try:
+                ok, message, data = _result(feishu_pull.fetch_feishu_expenses(days=30))
+            except Exception as exc:
+                messagebox.showerror("拉取失败", str(exc), parent=self.root)
+                return
+            payload = data if isinstance(data, dict) else {}
+            created = payload.get("created") or []
+            skipped = payload.get("skipped") or []
+            errors = payload.get("errors") or []
+            lines = [message]
+            if created:
+                lines.append("")
+                lines.append("新建：")
+                for item in created[:10]:
+                    lines.append(
+                        "  %s  %s  %s  ¥%.2f"
+                        % (
+                            item.get("employee") or "-",
+                            item.get("type") or "-",
+                            item.get("reason") or "-",
+                            (item.get("amount_cents") or 0) / 100.0,
+                        )
+                    )
+                if len(created) > 10:
+                    lines.append("  ...还有 %d 单" % (len(created) - 10))
+            if skipped:
+                reasons = {}
+                for item in skipped:
+                    reasons[item.get("reason")] = reasons.get(item.get("reason"), 0) + 1
+                lines.append("")
+                lines.append(
+                    "跳过：%s"
+                    % "、".join("%s×%d" % (k, v) for k, v in sorted(reasons.items()))
+                )
+            if errors:
+                lines.append("")
+                lines.append("失败 %d 单（可重试）" % len(errors))
+            text = "\n".join(lines)
+            if not ok and errors:
+                messagebox.showwarning("飞书拉取", text, parent=self.root)
+            else:
+                messagebox.showinfo("飞书拉取", text, parent=self.root)
+            refresh()
+
         actions = tk.Frame(parent, bg=C_PANEL, padx=12, pady=9)
         actions.pack(fill="x")
+        tk.Label(
+            actions,
+            text="员工在手机飞书「审批」里提单 → 点这里拉回本地",
+            bg=C_PANEL,
+            fg=C_TEXT_MUTED,
+            font=FONT_SMALL,
+        ).pack(side="left")
         ttk.Button(actions, text="同步飞书状态", command=sync_feishu).pack(side="right", padx=4)
-        ttk.Button(actions, text="提交飞书审批", command=send_feishu).pack(side="right", padx=4)
+        tk.Button(
+            actions,
+            text="从飞书拉取报销单",
+            font=FONT_B,
+            bg=C_NAV_ACTIVE,
+            fg="white",
+            relief="flat",
+            padx=12,
+            pady=6,
+            command=pull_feishu,
+        ).pack(side="right", padx=4)
         ttk.Button(actions, text="本地审核", command=approve).pack(side="right", padx=4)
         refresh()
 

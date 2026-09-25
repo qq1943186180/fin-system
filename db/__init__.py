@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _maintenance = threading.local()
 
 
@@ -749,12 +749,25 @@ def _migration_5(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_6(conn: sqlite3.Connection) -> None:
+    """补上 expense.instance_code。
+
+    该列一直被 modules/feishu.py 使用，却从未出现在建表或早期迁移中：
+    建表写的是 feishu_instance_id（已废弃、生产库全为 NULL），
+    _migration_2 的 expense additions 也没有它。结果全新库上
+    submit_expense_approval() 一写就 no such column: instance_code。
+    这里补偿性 ALTER，_add_column 自带幂等保护，已手工补过列的老库不受影响。
+    """
+    _add_column(conn, "expense", "instance_code TEXT")
+
+
 MIGRATIONS = [
     (1, "legacy_baseline", _migration_1),
     (2, "accounting_controls", _migration_2),
     (3, "legacy_data_normalization", _migration_3),
     (4, "constraints_and_indexes", _migration_4),
     (5, "inventory", _migration_5),
+    (6, "expense_feishu_instance_code", _migration_6),
 ]
 
 

@@ -8,6 +8,7 @@ __all__ = [
     "arap",
     "expense",
     "feishu",
+    "feishu_pull",
     "invoice_gui",
     "integration",
     "ledger",

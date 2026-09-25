@@ -427,7 +427,7 @@ def sync_approval_status() -> IntegrationResult:
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT * FROM expense WHERE status IN ('待审批','pending_review') "
+            "SELECT * FROM expense WHERE status IN ('pending_approval','pending_review') "
             "AND instance_code IS NOT NULL AND instance_code<>'' ORDER BY id"
         ).fetchall()
     finally:
