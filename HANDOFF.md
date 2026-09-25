@@ -67,7 +67,7 @@ modules/
   einvoice.py         # ★ 附件类型单一事实来源 + 数电票 XML/OFD 结构化解析（不走 OCR）
   export_service.py   # CSV/Excel/PDF 导出
 db/__init__.py        # schema（CREATE TABLE）+ 《小企业会计准则》科目表预置（在 .py 里，无 .sql 文件）
-tests/                # pytest（19 个测试文件，收集 229 个用例）
+tests/                # pytest（21 个测试文件，收集 244 个用例）
 tools/acceptance_check.py   # 逐页 + 新模块冒烟验收
 docs/                 # 截图等
 release/ build/ dist/ work/ # 构建产物/中间件（可再生，已 gitignore）
@@ -129,7 +129,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
 "C:/tmp/ocr_venv2/Scripts/python.exe" tools/acceptance_check.py  # 逐页 + 新模块冒烟
 ```
 
-- 当前基线：**pytest 229 passed** / 验收 **17 OK、0 FAIL**。（41 → 52 是 2026-09-10 新增 `tests/test_backup_retention.py` 的 11 例；→ 171 是打包验证器等；→ **229** 是 2026-09-11 方案 B 新增 `tests/test_einvoice_xml.py` 的 24 例）
+- 当前基线：**pytest 244 passed** / 验收 **17 OK、0 FAIL**。（41 → 52 是 2026-09-10 新增 `tests/test_backup_retention.py` 的 11 例；→ 171 是打包验证器等；→ 229 是 2026-09-11 方案 B 新增 `tests/test_einvoice_xml.py` 的 24 例；→ **244** 是同日飞书 `allow_self_approval` 修复新增 `tests/test_feishu_settings.py` 10 例 + `tests/test_feishu_settings_gui.py` 3 例 + 打包校验清单 1 例）
 - 打包后自检：`release\财务系统\财务系统.exe --self-check report=<路径> stderr=<路径>`（**不带参数跑是空输出、exit 0，属正常**；带参才写 `self-check.json`）。
 
 ---
@@ -167,7 +167,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
   - ✅ `manifest.sha256` 999 项，`财务系统.exe` 哈希与清单一致（`09b7332…2a3cd4`）；构建期内置自检 `exit=0`。
   - ⚠️ `release\frozen-self-check.json`（`7/11` 那份）是**旧构建残留**——`build.ps1` 把自检报告写到临时目录，不回写发布根，故该文件不会更新。**已于 2026-09-11 清入隔离区**（见 §11 残留清理）。
   - ℹ️ 构建工具链：本机无 `py` 启动器，3.11 宿主为 `C:\Users\li1\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\python.exe`，需 `-PythonPath` 显式传入（`build.ps1` 找不到 `py -3.11` 会直接抛错）。
-- ✅ **回归基线：`pytest` 229 passed**（P1 前 41 → P1 后 52 → P2~P5 后 111 → P6 后 130 → P7 后 164 → 打包验证器后 171 → **方案 B 后 229**）。
+- ✅ **回归基线：`pytest` 244 passed**（P1 前 41 → P1 后 52 → P2~P5 后 111 → P6 后 130 → P7 后 164 → 打包验证器后 171 → 方案 B 后 229 → **飞书 `allow_self_approval` 修复后 244**）。
 - 账套实际数据：科目 46 · 凭证 **12** · 往来（档案）2 · 期间 **2026-07**。
   - 补口径：凭证 12 = 已记账 **11** + 待审核 1；其中有 3 条 `test data cleanup` 冲销凭证，属**有意保留**的测试残留（已记账、与凭证 5/6/7 两两对冲，账平）。
   - **2026-09-11 02:34 删除了 1 条废弃草稿**：`voucher` id 11「冲销 2026-07-0001：123」（冲销真实的股东投资 ¥200,000，从未记账，纯残留）。13 → 12，`posted` 11 张未变、借贷平衡未变、发票台账未变；审计 `audit_event` id 105 `voucher_draft_deleted`；备份 `backups\finance-delvoucher11-20260911-023402.db`。
@@ -211,8 +211,9 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -PythonPath "C:\tmp\ocr_venv2
   金额抽取改六级优先级（含**大写金额校正**），买卖方按**版面区域**配对（不再按出现顺序）。
   新增 `--self-check <DIR>` 自检与 `--company-tax-no` 可选锚点；CLI 契约不变。
   回归基线：`work/ocr_samples/`（109 个真实附件 + `baseline.json`），**零回退**（老版能过的 17 张数值一致）。
-- [ ] 🟡 **P10：换数据源 + 支持 XML/OFD（B 已交付，A/D 待哥哥决策）** —— 评估文档 `docs/invoice-ocr-options-2026-09-11.md`。
+- [ ] 🟡 **P10：换数据源 + 支持 XML/OFD（B 已交付；A/D 已登记为待办，哥哥 2026-09-11 明确「先别干」）** —— 评估文档 `docs/invoice-ocr-options-2026-09-11.md`。
   - ✅ **方案 B（合规刚需）已完成，详见 §10.4。**
+  - ⏸ **方案 A/D 待办入口**：**等哥哥人工**登录税局导出「取得发票」Excel（2023-01 ~ 2026-09）放进 `work/`；拿到后我写**只读**对账工具出「漏票/多票/金额不符/重复」报告。**在哥哥导出之前不要动手写 A/D 代码。**
   - 🔴 **边界（先看）**：**系统 / agent 无法程序化接税局**，没有 API。合法直连通道只有「乐企（Natural System）」，门槛：营收 ≥5000 万 + 开票受票 ≥1 万份（多地口径 5 万份）/ 开票金额 ≥1 亿 + 纳税信用 A/B 级 + 软著 + 固定 IP + 等保 2.0 —— **高迥不满足任何一条**。所以下文「方案 A」= **哥哥人工导出/下载**，系统只做「拿到文件后解析/归档/对账」。爬税局/模拟登录一律不做。
   - **核心判断**：瓶颈**不是 OCR 精度**（PDF 场景已 100%），而是**数据源**。110 个附件中 109 个 PDF **全部有文本层**，PDF 兜底 OCR 从未触发 → 继续调 OCR 引擎边际收益 ≈ 0。
   - **方案 A（首选）**：哥哥**手动**从**税局「税务数字账户 → 全量发票查询 → 取得发票」**取数 —— ① 导出 Excel（含明细行）当**权威真值** ② 批量下载 **XML/OFD/PDF** 当**法定归档件**。邮箱链路职责降级为「归集附件」。⚠️ 只能下载数电票的 XML/OFD（老式税控发票下不了），但 Excel 导出覆盖全部。
@@ -611,6 +612,65 @@ python tools/backfill_business_data.py \
 **遗留**：`release/财务系统.exe` 是 PyInstaller 产物，桌面快捷方式指向它 ——
 **源码改动必须重新构建 exe 才生效**。
 
+### 10.5 飞书审批集成核查 + `allow_self_approval` 陷阱修复（2026-09-11 ✅ 已修）
+
+**结论：飞书可用；「点一次保存就打坏」的陷阱已修复并加测试锁死。**
+
+**核查证据（均为实跑，非读码推断）**
+
+| 项 | 结果 |
+|---|---|
+| `feishu.get_token()` 真取 token | ✅ 成功（token 长度 42，有 `X-Tt-Logid`） |
+| `feishu.validate_config()` | ✅ 通过 |
+| `feishu.self_check(True)` | ✅ 通过 |
+| `expense` 表 | 4 行，全部 `accounted`（id 2/3 有 `instance_code`） |
+| 全仓库 `allow_self_approval` 测试覆盖 | ❌ **0 处**（生产键却依赖它） |
+
+**配置生效链**（`modules/feishu.py::_cfg()`）：安装根 `config/feishu.json` → 数据根
+`%LOCALAPPDATA%\FinanceSystem\config\feishu.json` → **`settings.json` 的 `feishu` 段最后 merge 覆盖**。
+只读探针模拟合并后的实际生效值：
+
+```
+initiator_open_id  = ou_793bf4e0b89e8c6cb36676fdfabf29cf
+approver_open_id   = ou_793bf4e0b89e8c6cb36676fdfabf29cf   ← 与发起人相同
+allow_self_approval = True   ← 仅来自「数据根 feishu.json」；settings.json.feishu 里没有这个键
+=> validate_config(): ✅ 通过
+```
+
+**🔴 陷阱（已修）**：旧 `gui/main.py:2412` 在每次「保存集成设置」时**硬写**
+`data["feishu"]["allow_self_approval"] = False`。由于 `initiator == approver`，保存后
+`validate_config()` 会转为 `CONFIG_ERROR「发起人与审批人相同」`。已在隔离环境复现：
+保存前 ✅ / 模拟保存后 ❌。且旧 `save_integrations()` 是**先落盘再校验**，用户即使看到告警弹窗，
+坏值**已经写进 `settings.json`**。
+
+**✅ 修法（哥哥 2026-09-11 选「改 GUI 保留现值」）**
+
+| 层 | 改动 |
+|---|---|
+| `modules/feishu.py` | 新增 `effective_config()`：暴露 `_cfg()` 合并后的**生效值**（含只在 `feishu.json` 里的键），供调用方**读现值** |
+| `modules/feishu.py` | 新增 `build_settings_section(edited, allow_self_approval)`：`settings.json` 的 `feishu` 段**由它组装**；`allow_self_approval` **必须由调用方传入**，模块内**不给默认值**（给了就等于埋回同一个雷） |
+| `gui/main.py` | 设置页新增勾选框**「允许发起人自审（单人公司：发起人与审批人可为同一人）」**，初值取 `effective_config()`；保存时把勾选值交给 `build_settings_section()`；动作行下移一行（`row=6` → `row=7`） |
+| `gui/ui_theme.py` | 新增 `Panel.TCheckbutton` 样式（否则 ttk 勾选框在浅色面板上带一块 `C_BG` 异色方块） |
+
+**测试（13 例，两层）**
+- `tests/test_feishu_settings.py`（10 例）：配置合并语义（`settings.json` 赢、但 `feishu.json` 独有的键不被抹掉）、
+  `validate_config` 两条分支、**保存往返不破坏配置**、**反向对照**（硬写 False 确实会打坏）、
+  `build_settings_section` 形状、**源码守卫**（禁止 `["allow_self_approval"] = False` 复活）。
+- `tests/test_feishu_settings_gui.py`（3 例）：**真实建 Tk root、真的构造设置页、真的 `Button.invoke()` 点保存**，
+  再回读 `settings.json` 断言。勾选框初值 = 生效值；点保存后仍可用；主动取消勾选要真的写 `False`。
+
+**验证**：`pytest` **244 passed**（230 → 244）· 验收 `tools/acceptance_check.py` **17 OK / 0 FAIL**（含「设置」页）·
+`verify_release_packaging.py` 新增 `modules.feishu`/`gui.main` 目标符号全部 FOUND + **负对照**（注入假符号必被报出）·
+release 已重建（`dependency parity OK` / 冻结自检 `exit=0` / `Release ready`）。
+
+**⚠️ 仍未做（可选，不影响使用）**：给飞书配一个**不同于发起人的审批人 open_id**
+（治理上更干净，需哥哥提供另一个飞书账号）。
+
+---
+
+- 邮箱密码/授权码、飞书 secret —— **只经 DPAPI 加密**存 `credentials.json`，**绝不落明文、绝不进仓库/二进制**。
+- `config/feishu.json`、`db/*.db`、`data/`、`release/` 均已 gitignore。
+
 ---
 
 
@@ -709,6 +769,7 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\FinanceSystem\backups\cleanup-20260911-0
 | 体检 OCR 识别质量 | `tools/audit_history_invoice_ocr.py`（只读，出 JSON 到 `logs/`） |
 | **数电票 XML/OFD 解析**（方案 B） | `modules/einvoice.py` —— 白名单单一来源 + XML/OFD 结构化解析；回归 `tests/test_einvoice_xml.py`。⚠️ XML/OFD **不走 OCR**，`invoice_doc.ocr_version` 记为 `einvoice-xml` / `einvoice-ofd-xml` |
 | 解析失败的附件去哪了 | `%LOCALAPPDATA%\FinanceSystem\invoices\failed\`（**绝不静默丢弃**，见 §10.4） |
+| **飞书配置怎么读 / 怎么写** | 别直接读 `settings.json`：它**不是飞书配置的全集**（`allow_self_approval` 只在 `feishu.json`）。读用 `modules/feishu.py::effective_config()`；写用 `build_settings_section(edited, allow_self_approval)`。见 §10.5 |
 | **OCR 回归自检**（改了外部 OCR 后必跑） | `C:/tmp/ocr_venv2/Scripts/python.exe C:/Users/li1/invoice-agent/ocr_invoice.py --self-check "C:\Users\li1\fin-system\work\ocr_samples" --company-tax-no 91330105MACRGYRN32` ⚠️ **目录参数必须写 Windows 路径**；填 `/c/Users/...` 不报错但输出「样本 0 张」（静默假阴性）。基线：`样本 109 张：可入账 64 / 不可入账 45（其中无文本层 0）` |
 | **残留隔离区 / 还原** | `%LOCALAPPDATA%\FinanceSystem\backups\cleanup-20260911-0230\`（含 `manifest.json` + SHA256，可整体还原；见 §11） |
 | 清理后的 DB 快照 | `backups\finance-cleanup-20260911-0230.db`（清理前）／`backups\finance-delvoucher11-20260911-023402.db`（删凭证 11 前） |

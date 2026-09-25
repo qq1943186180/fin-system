@@ -114,6 +114,24 @@ def test_targets_include_sentinel_symbols_from_einvoice_plan_b() -> None:
     assert "einvoice-ofd-xml" in einvoice
 
 
+def test_targets_include_sentinel_symbols_from_feishu_fix() -> None:
+    """回归本意：目标清单必须盯着飞书配置修复引入的符号。
+
+    这次修的是「点一次保存就打坏飞书配置」——它改的是 GUI + 模块两层，
+    恰恰是最容易「源码改了但 exe 还是旧的」的场景，所以必须进打包校验。
+    """
+
+    feishu = vr.TARGETS.get("modules.feishu")
+    assert feishu, "飞书修复的模块必须进入打包校验清单"
+    for symbol in ("effective_config", "build_settings_section"):
+        assert symbol in feishu
+
+    gui = vr.TARGETS.get("gui.main")
+    assert gui, "GUI 侧改动（勾选框 + 保存逻辑）也必须进清单"
+    assert "feishu_allow_self_var" in gui
+    assert "Panel.TCheckbutton" in gui
+
+
 def test_main_reports_missing_exe(tmp_path: Path, capsys) -> None:
     code = vr.main([str(tmp_path / "nope.exe"), str(tmp_path / "tmp")])
 

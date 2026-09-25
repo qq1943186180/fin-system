@@ -59,6 +59,17 @@ TARGETS: dict[str, list[str]] = {
         "einvoice-ofd-xml",          # 方案 B：来源标记（字符串常量）
         "EinvoiceParseError",        # 对照：模块自定义异常
     ],
+    "modules.feishu": [
+        "effective_config",          # 飞书修复：合并后的生效配置（设置页据此初始化勾选框）
+        "build_settings_section",    # 飞书修复：保存时由它组装 settings.json 的 feishu 段
+        "allow_self_approval",       # 飞书修复：不得被硬写 False 的那个键
+        "validate_config",           # 对照：既有函数
+    ],
+    "gui.main": [
+        "feishu_allow_self_var",     # 飞书修复：勾选框变量名（已进 co_varnames）
+        "Panel.TCheckbutton",        # 飞书修复：面板底色勾选框样式（字符串常量）
+        "save_integrations",         # 对照：既有函数
+    ],
 }
 
 ENTRY_TARGETS = ("self_check", "_write_self_check_report", "launch")

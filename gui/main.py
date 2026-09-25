@@ -2348,6 +2348,16 @@ class FinanceApp:
         tk.Label(integrations, text="飞书审批与发票识别", font=FONT_B, bg=C_PANEL, fg=C_TEXT).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
         cfg = self._load_settings_json()
         feishu_cfg = dict(cfg.get("feishu") or {})
+        # ⚠️ settings.json 不是飞书配置的全集：feishu.json 里还有 allow_self_approval
+        # 这类键。保存时必须从「合并后的生效值」出发回写，否则一次「保存集成设置」
+        # 就会把正在工作的配置打坏（历史实现是硬写 False，导致单人公司的自审配置失效）。
+        try:
+            feishu_effective = dict(feishu.effective_config() or {})
+        except Exception:
+            feishu_effective = {}
+        feishu_allow_self_var = tk.BooleanVar(
+            value=bool(feishu_effective.get("allow_self_approval", False))
+        )
         fields = (
             ("App ID", "app_id"), ("审批定义 approval_code", "approval_code"),
             ("发起人 open_id", "initiator_open_id"), ("审批人 open_id", "approver_open_id"),
@@ -2407,9 +2417,10 @@ class FinanceApp:
                 if not isinstance(command, list) or any(not isinstance(item, str) or not item for item in command):
                     raise ValueError("识别命令必须是非空字符串组成的 JSON 数组")
                 data = self._load_settings_json()
-                data["feishu"] = {key: variable.get().strip() for key, variable in feishu_vars.items()}
-                data["feishu"]["app_secret_ref"] = "feishu.app_secret"
-                data["feishu"]["allow_self_approval"] = False
+                data["feishu"] = feishu.build_settings_section(
+                    {key: variable.get() for key, variable in feishu_vars.items()},
+                    feishu_allow_self_var.get(),
+                )
                 data["invoice_agent_command"] = command
                 if invoice_summary_var.get().strip():
                     data["invoice_summary_path"] = invoice_summary_var.get().strip()
@@ -2419,21 +2430,35 @@ class FinanceApp:
                 checked = feishu.validate_config()
                 ok, message, _value = _result(checked)
                 if not ok:
-                    messagebox.showwarning("已保存但需处理", message + "\n\n请按提示修正；发起人和审批人必须使用不同 open_id。", parent=self.root)
+                    messagebox.showwarning("已保存但需处理", message + "\n\n请按提示修正；发起人与审批人须为不同 open_id，或勾选「允许发起人自审」。", parent=self.root)
                 else:
                     messagebox.showinfo("设置已保存", message, parent=self.root)
                 self._clear_dirty()
             except Exception as exc:
                 messagebox.showerror("保存失败", str(exc), parent=self.root)
 
+        allow_self_row = tk.Frame(integrations, bg=C_PANEL)
+        allow_self_row.grid(row=6, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(
+            allow_self_row,
+            text="允许发起人自审（单人公司：发起人与审批人可为同一人）",
+            variable=feishu_allow_self_var,
+            style="Panel.TCheckbutton",
+        ).pack(side="left")
+        tk.Label(
+            allow_self_row,
+            text="不勾选时，发起人与审批人必须是不同 open_id。",
+            bg=C_PANEL, fg=C_TEXT_MUTED, font=FONT_SMALL,
+        ).pack(side="left", padx=(8, 0))
+
         row_actions = tk.Frame(integrations, bg=C_PANEL)
-        row_actions.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        row_actions.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         tk.Label(row_actions, textvariable=secret_status, bg=C_PANEL, fg=C_TEXT_MUTED, font=FONT_SMALL).pack(side="left")
         ttk.Button(row_actions, text="更新密钥", command=set_secret_value).pack(side="left", padx=6)
         ttk.Button(row_actions, text="删除密钥", command=delete_secret_value).pack(side="left")
         ttk.Button(row_actions, text="保存集成设置", command=save_integrations).pack(side="right")
         refresh_secret_status()
-        for variable in (*feishu_vars.values(), invoice_command_var, invoice_summary_var):
+        for variable in (*feishu_vars.values(), invoice_command_var, invoice_summary_var, feishu_allow_self_var):
             variable.trace_add("write", lambda *_a: self._mark_dirty("集成设置"))
 
         issues_panel = self._panel(inner, padx=16, pady=14)

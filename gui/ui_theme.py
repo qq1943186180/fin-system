@@ -146,6 +146,13 @@ def configure_light_style(root: tk.Tk) -> None:
                     borderwidth=0,
                     arrowcolor=C_TEXT_MUTED)
 
+    # 放在 C_PANEL/C_CARD 面板里的勾选框：ttk 默认会继承 "." 的 C_BG 底色，
+    # 直接嵌在浅色面板上会出现一块异色方块，故单独给一个面板底色变体。
+    style.configure("Panel.TCheckbutton", background=C_PANEL, foreground=C_TEXT)
+    style.map("Panel.TCheckbutton",
+              background=[("active", C_PANEL), ("selected", C_PANEL)],
+              foreground=[("disabled", C_TEXT_DIM)])
+
 
 # 2026-09-10：原先这里有一个 `configure_dark_style = configure_light_style` 的
 # "back-compat alias"。名字与实现相反（配色全是浅色），会误导维护者以为在配深色主题，

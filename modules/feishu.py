@@ -103,6 +103,39 @@ def _cfg() -> dict[str, Any]:
     return merged
 
 
+def effective_config() -> dict[str, Any]:
+    """Return the merged, effective (secret-free) Feishu configuration.
+
+    Callers that are about to *rewrite* the configuration must start from this
+    value rather than from ``settings.json`` alone: the dedicated
+    ``feishu.json`` files carry keys (``allow_self_approval`` in particular)
+    that ``settings.json`` never stores, so reading only the latter would
+    silently drop them on the next save.
+    """
+
+    return _cfg()
+
+
+def build_settings_section(edited: dict[str, Any], allow_self_approval: bool) -> dict[str, Any]:
+    """Compose the ``feishu`` section that ``settings.json`` should hold.
+
+    Only the values the settings page actually edits are written here; every
+    other key keeps living in the dedicated ``feishu.json`` (``effective_config()``
+    merges both, and ``settings.json`` wins).
+
+    ``allow_self_approval`` must be passed in by the caller -- normally from a
+    checkbox initialised with ``effective_config()``.  Never hard-code a default
+    for it: the value only ever exists in ``feishu.json``, so writing a
+    hard-coded ``False`` here silently breaks a working single-operator setup
+    (initiator == approver) the first time someone clicks "save".
+    """
+
+    section = {key: str(value or "").strip() for key, value in dict(edited or {}).items()}
+    section["app_secret_ref"] = SECRET_NAME
+    section["allow_self_approval"] = bool(allow_self_approval)
+    return section
+
+
 def _request_id(headers) -> str | None:
     for name in ("X-Tt-Logid", "X-Request-Id", "X-Request-ID"):
         value = headers.get(name) if headers else None
