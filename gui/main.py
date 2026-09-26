@@ -268,6 +268,7 @@ class FinanceApp:
         self._tray_icon = None
         self._tray_thread = None
         self._close_to_tray = True
+        self._tray_syncing = False
 
         root.title("财务系统 · 可靠单机记账版")
         screen_w, screen_h = root.winfo_screenwidth(), root.winfo_screenheight()
@@ -524,31 +525,103 @@ class FinanceApp:
             if self._confirm_abandon():
                 self._quit_app()
             return
-        # 最小化到托盘
+        # 托盘起不来时（缺 pystray/Pillow，或 icon.ico 不在 bundle）：
+        # 收起来就再也找不回来了 —— 那等于让程序「假死」，比直接退出更糟。
+        # 这种降级路径下沿用系统默认：真退出（带未保存确认）。
+        if not self._tray_icon:
+            if self._confirm_abandon():
+                self._quit_app()
+            return
+        # 最小化到托盘。托盘图标本身常驻（run() 默认 setup 即 visible=True），
+        # 这里只负责把窗口收起来；不要动 visible，否则图标会被 NIM_DELETE 删掉。
         self.root.withdraw()
-        if self._tray_icon:
-            try:
-                self._tray_icon.visible = True
-            except Exception:
-                pass
 
     def _show_window(self, icon=None, item=None) -> None:
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
-        if self._tray_icon:
-            try:
-                self._tray_icon.visible = False
-            except Exception:
-                pass
 
     def _hide_window(self, icon=None, item=None) -> None:
         self.root.withdraw()
+
+    def _tray_sync_feishu(self, icon=None, item=None) -> None:
+        """托盘右键「立即同步」：拉取飞书审批实例，回主线程刷新界面。
+
+        pystray 的菜单回调跑在自己的消息循环里，tkinter 调用必须
+        ``after(0, ...)`` 切回主线程，否则会 TclError 或静默卡死。
+        """
+        if self._tray_syncing:
+            return
+        self._tray_syncing = True
         if self._tray_icon:
             try:
-                self._tray_icon.visible = True
+                self._tray_icon.update_menu()
             except Exception:
                 pass
+
+        def worker():
+            try:
+                ok, message, data = _result(feishu_pull.fetch_feishu_expenses(days=30))
+            except Exception as exc:  # 网络/凭证异常都不能让托盘线程死掉
+                ok, message, data = False, str(exc), {}
+            # 主窗口可能已被销毁（用户点了「退出」），此时 after() 会抛
+            # RuntimeError("main thread is not in main loop")，必须自己吞掉，
+            # 否则异常冒到子线程里、_tray_syncing 永久卡在 True。
+            try:
+                if self.root.winfo_exists():
+                    self.root.after(0, lambda: finished(ok, message, data))
+                else:
+                    self._tray_syncing = False
+            except Exception:
+                self._tray_syncing = False
+
+        def finished(ok, message, data):
+            self._tray_syncing = False
+            if not self.root.winfo_exists():
+                return
+            payload = data if isinstance(data, dict) else {}
+            created = payload.get("created") or []
+            errors = payload.get("errors") or []
+            self._refresh_after_tray_sync(ok, message, len(created), len(errors))
+            if self._tray_icon:
+                try:
+                    self._tray_icon.update_menu()
+                except Exception:
+                    pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _refresh_after_tray_sync(self, ok: bool, message: str, created: int, errors: int) -> None:
+        """同步完在主线程里给出反馈，并在当前页就是报销页时原地刷新。"""
+        try:
+            if ok and created:
+                self.header_status.config(
+                    text="飞书同步完成：新建 %d 单" % created, fg=C_OK
+                )
+            elif not ok:
+                self.header_status.config(text="飞书同步失败：" + message[:40], fg=C_DANGER)
+            else:
+                self.header_status.config(text="飞书同步完成：无新单", fg=C_TEXT_MUTED)
+        except Exception:
+            pass
+        # 停留在报销页时把列表刷新出来，让用户立刻看到新单；否则不打扰。
+        try:
+            if self._active_nav == "费用票据":
+                self._show_page("费用票据", force=True)
+        except Exception:
+            LOG.exception("托盘同步后刷新报销页失败")
+        try:
+            if ok and created:
+                messagebox.showinfo(
+                    "飞书同步", "已从飞书拉取 %d 张报销单。%s" % (created, message), parent=self.root
+                )
+            elif not ok or errors:
+                messagebox.showwarning(
+                    "飞书同步", "%s%s" % (message, "\n失败 %d 单" % errors if errors else ""),
+                    parent=self.root,
+                )
+        except Exception:
+            pass
 
     def _quit_app(self, icon=None, item=None) -> None:
         self._close_to_tray = False
@@ -567,15 +640,17 @@ class FinanceApp:
                 return
             image = Image.open(str(icon_path))
             menu = pystray.Menu(
-                pystray.MenuItem("显示窗口", self._show_window),
+                pystray.MenuItem("显示窗口", self._show_window, default=True),
+                pystray.MenuItem("立即同步飞书报销单", self._tray_sync_feishu,
+                                 enabled=lambda _item: not self._tray_syncing),
                 pystray.MenuItem("隐藏窗口", self._hide_window),
                 pystray.MenuItem("退出", self._quit_app),
             )
             icon = pystray.Icon("finance", image, "财务系统", menu)
-            icon.visible = False
             self._tray_icon = icon
 
             def _run():
+                # 不传 setup -> pystray 默认把 visible 置 True，图标常驻通知区。
                 icon.run()
 
             t = threading.Thread(target=_run, daemon=True)
@@ -584,6 +659,7 @@ class FinanceApp:
         except Exception:
             self._tray_icon = None
             self._tray_thread = None
+            LOG.exception("启动系统托盘失败")
 
     def _stop_tray(self) -> None:
         if self._tray_icon:
@@ -1302,7 +1378,7 @@ class FinanceApp:
         search.pack(side="left", padx=8)
         self._search_widget = search
         ttk.Button(controls, text="查找", command=lambda: refresh()).pack(side="left")
-        tk.Button(controls, text="新增往来方", font=FONT_B, bg=C_NAV_ACTIVE, fg="white", relief="flat", padx=12, pady=6, command=lambda: self._add_partner_dialog(refresh)).pack(side="right")
+        tk.Button(controls, text="新增往来方", font=FONT_B, bg=C_ACCENT, fg="white", activebackground=C_ACCENT_HOVER, activeforeground="white", relief="flat", padx=12, pady=6, command=lambda: self._add_partner_dialog(refresh)).pack(side="right")
         panes = ttk.Panedwindow(parent, orient="horizontal")
         panes.pack(fill="both", expand=True)
         left, right = self._panel(panes, padx=10, pady=10), self._panel(panes, padx=10, pady=10)
@@ -1470,8 +1546,10 @@ class FinanceApp:
             actions,
             text="从飞书拉取报销单",
             font=FONT_B,
-            bg=C_NAV_ACTIVE,
+            bg=C_ACCENT,
             fg="white",
+            activebackground=C_ACCENT_HOVER,
+            activeforeground="white",
             relief="flat",
             padx=12,
             pady=6,
@@ -1486,7 +1564,7 @@ class FinanceApp:
         status_var = tk.StringVar(value="全部")
         ttk.Combobox(controls, textvariable=status_var, values=("全部", "待确认", "草稿", "待审核", "已记账"), width=10, state="readonly").pack(side="left")
         ttk.Button(controls, text="刷新", command=lambda: refresh()).pack(side="left", padx=6)
-        tk.Button(controls, text="运行发票识别", font=FONT_B, bg=C_NAV_ACTIVE, fg="white", relief="flat", padx=12, pady=6, command=self._fetch_invoices).pack(side="right")
+        tk.Button(controls, text="运行发票识别", font=FONT_B, bg=C_ACCENT, fg="white", activebackground=C_ACCENT_HOVER, activeforeground="white", relief="flat", padx=12, pady=6, command=self._fetch_invoices).pack(side="right")
         self.invoice_status = tk.Label(controls, text="", font=FONT_SMALL, bg=C_PANEL, fg=C_TEXT_MUTED)
         self.invoice_status.pack(side="right", padx=10)
         panel = tk.Frame(parent, bg=C_PANEL, padx=12, pady=8)
