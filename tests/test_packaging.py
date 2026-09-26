@@ -121,6 +121,31 @@ def test_spec_is_relative_and_excludes_mutable_data():
     assert 'project_root / "run_finance.py"' in text
 
 
+def test_spec_bundles_icon_for_runtime_use():
+    """icon.ico 必须进 datas，否则打包后标题栏/托盘图标双双失效。
+
+    回归 bug（2026-09-26）：spec 的 datas 只有 db/modules/gui，icon.ico 仅被
+    EXE(icon=[...]) 用作资源嵌入。而 app_paths.INSTALL_ROOT 在冻结态指向
+    _internal，gui/main.py 读的是 INSTALL_ROOT/"icon.ico" ——
+    该文件不在 bundle 里，两处 exists() 守卫直接跳过：
+      · root.iconbitmap() 不执行  -> 标题栏无图标
+      · _start_tray() 提前 return -> 托盘图标完全不创建
+    """
+    text = (PROJECT_ROOT / "财务系统.spec").read_text(encoding="utf-8")
+    assert "icon.ico" in text, "spec 里应出现 icon.ico"
+    # datas 段里必须有 icon.ico（不能只出现在 EXE(icon=[...]) 里）
+    datas_line = [ln for ln in text.splitlines() if ln.strip().startswith("datas=")]
+    assert datas_line, "找不到 datas= 行"
+    assert "icon.ico" in datas_line[0], (
+        "icon.ico 必须放进 datas（运行时资源），否则打包后窗口/托盘图标缺失：%s"
+        % datas_line[0]
+    )
+    # 且必须落在 bundle 根（目标为 '.'），因为代码按 INSTALL_ROOT/"icon.ico" 查找
+    assert "('icon.ico', '.')" in datas_line[0].replace('"', "'"), (
+        "icon.ico 的目标目录应为 '.'，与 INSTALL_ROOT 的查找路径一致"
+    )
+
+
 def test_source_runtime_self_check(tmp_path):
     report = tmp_path / "self-check.json"
     env = os.environ.copy()
