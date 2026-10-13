@@ -109,16 +109,16 @@ def _nonempty(value: Any) -> bool:
 
 
 def _to_cents(value: Any) -> int | None:
-    """把 OCR 文本金额转成分；无法解析返回 None。"""
-    if value is None:
-        return None
-    cleaned = "".join(ch for ch in str(value) if ch.isdigit() or ch == ".")
-    if not cleaned:
-        return None
-    try:
-        return int(round(float(cleaned) * 100))
-    except ValueError:
-        return None
+    """把 OCR 文本金额转成分；无法解析返回 None。
+
+    🔴 2026-10-14 修：旧实现用
+    ``"".join(ch for ch in str(value) if ch.isdigit() or ch == ".")`` 过滤字符，
+    **把负号筛掉了** —— ``-5.00`` 会变成 ``+500``。红字票/冲销金额进来直接变正数。
+    现已收敛到 :mod:`modules.money`。
+    """
+    from modules import money
+
+    return money.parse_cents_or_none(value)
 
 
 # ---------------------------------------------------------------------------

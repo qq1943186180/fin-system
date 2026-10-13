@@ -182,16 +182,17 @@ def _date(value: str) -> str:
 
 
 def _cents(value: Any) -> int:
+    """票面金额 → 整数分；空值给 0，格式非法抛 ``ValueError``。
+
+    实现已收敛到 :mod:`modules.money`（2026-10-14）。
+    """
     if value is None or value == "":
         return 0
-    cleaned = re.sub(r"[^0-9.\-]", "", str(value).replace(",", ""))
-    if not cleaned:
-        return 0
-    from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+    from modules import money
 
     try:
-        return int((Decimal(cleaned) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    except InvalidOperation as exc:
+        return money.parse_cents(value)
+    except money.MoneyParseError as exc:
         raise ValueError("发票金额格式无效") from exc
 
 

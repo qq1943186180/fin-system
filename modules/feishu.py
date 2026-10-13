@@ -272,10 +272,17 @@ def get_token() -> IntegrationResult:
 
 
 def _expense_amount_cents(item) -> int:
+    """报销单金额 → 整数分。优先用已算好的 ``amount_cents``。
+
+    实现已收敛到 :mod:`modules.money`（2026-10-14）—— 原先这里用
+    ``round(float(...) * 100)``（银行家舍入），与记账链路不一致。
+    """
     keys = set(item.keys()) if hasattr(item, "keys") else set()
     if "amount_cents" in keys and item["amount_cents"] is not None:
         return int(item["amount_cents"])
-    return int(round(float(item["amount"] or 0) * 100))
+    from modules import money
+
+    return money.parse_cents_or_zero(item.get("amount") if hasattr(item, "get") else 0)
 
 
 def _iso(value: str) -> str:

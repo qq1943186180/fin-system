@@ -76,21 +76,20 @@ def _period_of(date_str: str) -> str:
 
 
 def _money_to_cents(value: Any, field: str = "金额") -> int:
-    if value is None or isinstance(value, bool):
-        raise ValueError(f"{field}无效")
+    """严格版：拒绝空值/布尔/超过两位小数。
+
+    实现已收敛到 :mod:`modules.money`（2026-10-14）。
+    """
+    from modules import money
+
     try:
-        amount = Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        raise ValueError(f"{field}无效") from None
-    if not amount.is_finite():
-        raise ValueError(f"{field}无效")
-    rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    if amount != rounded:
-        raise ValueError(f"{field}最多保留两位小数")
-    return int(rounded * 100)
+        return money.strict_cents(value, field)
+    except money.MoneyParseError as exc:
+        raise ValueError(str(exc)) from None
 
 
 def _strict_cents(value: Any, field: str) -> int:
+    """入参**已经是整数分**时的校验（与 _money_to_cents 不是同一事实）。"""
     if value is None or isinstance(value, bool):
         raise ValueError(f"{field}必须是整数分")
     if isinstance(value, int):

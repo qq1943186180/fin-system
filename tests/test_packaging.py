@@ -175,3 +175,36 @@ def test_existing_release_has_no_mutable_data_or_secret_config():
     found = [path for path in release.rglob("*") if path.name.lower() in forbidden]
     assert not found
     assert (release / "manifest.sha256").is_file()
+
+
+def test_spec_declares_lazily_imported_modules():
+    """spec 的 hiddenimports 必须覆盖所有「函数内延迟 import」的模块。
+
+    背景：``modules/money.py``（2026-10-14 新增，全项目唯一的金额转换实现）
+    只在函数体内 ``from modules import money`` —— PyInstaller 的静态分析
+    **看不出来**，不显式登记就会在打包版里 ModuleNotFoundError，
+    而源码直跑完全正常（开发机永远复现不了）。
+
+    做法：扫 modules/*.py 里的函数内 import，凡是本项目的模块都必须出现在
+    hiddenimports 里。
+    """
+    import re
+
+    spec_text = (PROJECT_ROOT / "财务系统.spec").read_text(encoding="utf-8")
+    declared = set(re.findall(r"'(modules\.[a-z_]+)'", spec_text))
+
+    lazy: set[str] = set()
+    for path in (PROJECT_ROOT / "modules").glob("*.py"):
+        src = path.read_text(encoding="utf-8")
+        # 函数内 import：缩进的 "from modules import X" / "import modules.X"
+        for m in re.finditer(r"^\s+from modules import ([a-z_]+)", src, re.M):
+            lazy.add("modules.%s" % m.group(1))
+        for m in re.finditer(r"^\s+import (modules\.[a-z_]+)", src, re.M):
+            lazy.add(m.group(1))
+
+    missing = sorted(lazy - declared)
+    assert not missing, (
+        "这些模块只在函数体内 import，PyInstaller 静态分析发现不了，"
+        "必须显式写进 财务系统.spec 的 hiddenimports：%s。"
+        "漏了会在打包版里 ModuleNotFoundError，而源码直跑看不出来。" % missing
+    )

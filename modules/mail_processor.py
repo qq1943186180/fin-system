@@ -27,26 +27,24 @@ ALLOWED_EXTS = SUPPORTED_EXTS
 
 
 def _agent_command() -> list[str] | None:
-    """读取 invoice_agent_command。"""
-    try:
-        from app_paths import CONFIG_DIR
-        config_dir = Path(CONFIG_DIR)
-    except Exception:
-        LOG.exception("读取 CONFIG_DIR 失败，退回项目 config 目录")
-        config_dir = Path(__file__).resolve().parents[1] / "config"
+    """读取 ``invoice_agent_command``。
 
-    settings_path = config_dir / "settings.json"
-    if not settings_path.exists():
-        return None
-    try:
-        import json
-        settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        cmd = settings.get("invoice_agent_command")
-        if isinstance(cmd, list) and cmd:
-            return [str(x) for x in cmd]
-    except Exception:
-        pass
-    return None
+    🔴 2026-10-14 修：本函数原先**自持一份**只读 settings.json 的实现，
+    与 :func:`modules.invoice_gui._agent_command` 是"同一事实的两个实现"，
+    且接受域更窄、失败时静默：
+
+    * 不支持 ``FINANCE_INVOICE_AGENT_COMMAND`` 环境变量覆盖；
+    * settings.json **损坏时** ``except Exception: pass`` → 返回 None →
+      上层报「未配置 invoice_agent_command」，而真因是**读不了**。
+      按这个提示去配命令，配到天荒地老也不会好（误导性诊断）。
+
+    现已收敛为直接复用 invoice_gui 那一份（单一事实来源）。
+    用**函数内延迟 import**：invoice_gui 模块级 import 了 db/ledger，
+    比本模块重，不能为读个配置把它拖到导入期。
+    """
+    from modules import invoice_gui
+
+    return invoice_gui._agent_command()
 
 
 def _quarantine(data: bytes, filename: str) -> None:

@@ -259,17 +259,15 @@ def _parse_detail_rows(rows, w_summary, w_date, w_amount) -> list[dict]:
 
 
 def _to_cents(value) -> int:
-    """金额控件可能给字符串、数字、或带千分位的文本。"""
+    """金额控件可能给字符串、数字、或带千分位的文本；无法解析返回 0。
 
-    if value is None:
-        return 0
-    if isinstance(value, (int, float)):
-        return int(round(float(value) * 100))
-    text = str(value).replace(",", "").replace("¥", "").replace("￥", "").strip()
-    try:
-        return int(round(float(text) * 100))
-    except (TypeError, ValueError):
-        return 0
+    实现已收敛到 :mod:`modules.money`（2026-10-14）。原先这里用
+    ``round(float(...) * 100)`` —— 那是**银行家舍入**，与记账链路的
+    ROUND_HALF_UP 在半分位上差 1 分（``0.125`` 会得 12 而非 13）。
+    """
+    from modules import money
+
+    return money.parse_cents_or_zero(value)
 
 
 # --------------------------------------------------------------------------

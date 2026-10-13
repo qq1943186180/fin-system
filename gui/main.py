@@ -144,10 +144,12 @@ def _validate_period(value: str) -> str:
 
 
 def _parse_cents(value: object, *, positive: bool = False) -> int:
-    text = str(value or "").replace(",", "").strip()
+    """GUI 录入金额 → 整数分；实现已收敛到 :mod:`modules.money`。"""
+    from modules import money
+
     try:
-        cents = int((Decimal(text or "0") * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    except (InvalidOperation, ValueError) as exc:
+        cents = money.parse_cents(value)
+    except money.MoneyParseError as exc:
         raise ValueError("金额格式无效") from exc
     if positive and cents <= 0:
         raise ValueError("金额必须大于 0")
@@ -260,6 +262,7 @@ class FinanceApp:
         self._search_widget = None
         self._active_nav = ""
         self._issues: list[dict] = []
+        self._issue_check_failed = False
         self._nav_buttons: dict[str, tk.Button] = {}
         self._report_action_buttons: list[tk.Widget] = []
         self._report_cache: dict | None = None
@@ -730,24 +733,45 @@ class FinanceApp:
         ).pack(anchor="w", pady=(8, 0))
 
     def _open_issues(self) -> list[dict]:
+        """查询阻断性数据异常。
+
+        ⚠️ 查询失败时**必须置 ``_issue_check_failed``**，绝不能返回空列表就当
+        「没有异常」—— 那会让 ``_refresh_issue_state`` 把报表按钮解锁，
+        等于用一个查询错误放行了本该被阻断的报表（本项目 2026-10-14 实测的
+        静默失败：DB 抛 OSError 时提示条消失、按钮变 normal）。
+        """
+        self._issue_check_failed = False
         try:
             getter = getattr(db, "get_open_data_issues", None)
             if getter:
                 return [dict(row) for row in getter(severity="blocking")]
             return [dict(row) for row in reports.get_blocking_issues()]
         except Exception:
+            LOG.exception("查询阻断性数据异常失败（报表将保持暂停）")
+            self._issue_check_failed = True
             return []
+
+    @property
+    def _reports_blocked(self) -> bool:
+        """报表是否应被阻断：有异常 **或** 异常检查本身失败（fail-closed）。"""
+        return bool(self._issues) or bool(getattr(self, "_issue_check_failed", False))
 
     def _refresh_issue_state(self) -> None:
         self._issues = self._open_issues()
         if self._issues:
             self.issue_text.configure(text=f"发现 {len(self._issues)} 项阻断性数据异常；正式报表已暂停。")
             self.issue_bar.grid()
+        elif self._issue_check_failed:
+            # 检查失败 ≠ 没有异常。提示条必须留着，且原因要说清楚，
+            # 否则用户会以为"系统说没问题"。
+            self.issue_text.configure(text="阻断性异常检查失败，报表已暂停；请查看日志后重试。")
+            self.issue_bar.grid()
         else:
+            self.issue_text.configure(text="")
             self.issue_bar.grid_remove()
         for button in self._report_action_buttons:
             if button.winfo_exists():
-                button.configure(state="disabled" if self._issues else "normal")
+                button.configure(state="disabled" if self._reports_blocked else "normal")
 
     def _panel(self, parent, **kwargs) -> tk.Frame:
         options = {"bg": C_CARD, "highlightthickness": 1, "highlightbackground": C_BORDER}
@@ -831,7 +855,8 @@ class FinanceApp:
         cards = tk.Frame(parent, bg=C_BG)
         cards.pack(fill="x")
         items = [
-            ("阻断异常", str(len(self._issues)), C_DANGER if self._issues else C_OK),
+            ("阻断异常", "?" if self._issue_check_failed else str(len(self._issues)),
+             C_DANGER if self._reports_blocked else C_OK),
             *[(k, str(v), C_ACCENT) for k, v in counts.items()],
         ]
         for index, (label, value, colour) in enumerate(items):
@@ -865,7 +890,7 @@ class FinanceApp:
             ModernButton(quick.inner, text=label, variant="ghost",
                          font=FONT_SMALL, height=32,
                          command=lambda p=page: self._show_page(p)).pack(fill="x", pady=4)
-        if self._issues:
+        if self._reports_blocked:
             ModernButton(quick.inner, text="处理数据异常", variant="danger",
                          font=FONT_SMALL, height=32,
                          command=self._open_issue_dialog).pack(fill="x", pady=(16, 4))
@@ -1769,7 +1794,7 @@ class FinanceApp:
         excel_btn.pack(side="left", padx=4)
         pdf_btn.pack(side="left", padx=4)
         self._report_action_buttons = [generate_btn, export_btn, excel_btn, pdf_btn]
-        if self._issues:
+        if self._reports_blocked:
             for button in self._report_action_buttons:
                 button.configure(state="disabled")
             tk.Label(controls, text="请先处理阻断性数据异常", bg=C_BG, fg=C_DANGER, font=FONT_B).pack(side="right")
@@ -1791,9 +1816,14 @@ class FinanceApp:
         footer.pack(anchor="e", pady=(8, 0))
 
         def generate():
-            if self._open_issues():
+            if self._open_issues() or self._issue_check_failed:
                 self._refresh_issue_state()
-                messagebox.showerror("报表已暂停", "存在未处理的数据异常，请先处理后再生成正式报表。", parent=self.root)
+                reason = (
+                    "阻断性异常检查失败，请查看日志后重试。"
+                    if self._issue_check_failed
+                    else "存在未处理的数据异常，请先处理后再生成正式报表。"
+                )
+                messagebox.showerror("报表已暂停", reason, parent=self.root)
                 return
             try:
                 period = _validate_period(period_var.get())
@@ -1900,7 +1930,7 @@ class FinanceApp:
         export_btn.configure(command=lambda: _do_export("csv"))
         excel_btn.configure(command=lambda: _do_export("xlsx"))
         pdf_btn.configure(command=lambda: _do_export("pdf"))
-        if not self._issues:
+        if not self._reports_blocked:
             self.root.after_idle(generate)
 
     # ------------------------------ 账簿 ------------------------------
@@ -2069,7 +2099,7 @@ class FinanceApp:
         csv_btn.configure(command=lambda: _do_export("csv"))
         xlsx_btn.configure(command=lambda: _do_export("xlsx"))
         pdf_btn.configure(command=lambda: _do_export("pdf"))
-        if not self._issues:
+        if not self._reports_blocked:
             self.root.after_idle(generate)
 
     def _export_books_csv(self, path: Path, cache: dict) -> None:
@@ -2590,7 +2620,10 @@ class FinanceApp:
         issues_panel = self._panel(inner, padx=16, pady=14)
         issues_panel.pack(fill="x", pady=(10, 20))
         tk.Label(issues_panel, text="数据异常", font=FONT_B, bg=C_PANEL, fg=C_TEXT).pack(side="left")
-        tk.Label(issues_panel, text=f"当前阻断项：{len(self._issues)}", font=FONT, bg=C_PANEL, fg=C_DANGER if self._issues else C_OK).pack(side="left", padx=16)
+        tk.Label(issues_panel,
+                 text=("当前阻断项：检查失败" if getattr(self, "_issue_check_failed", False)
+                       else f"当前阻断项：{len(self._issues)}"),
+                 font=FONT, bg=C_PANEL, fg=C_DANGER if self._reports_blocked else C_OK).pack(side="left", padx=16)
         ttk.Button(issues_panel, text="查看并处理", command=self._open_issue_dialog).pack(side="right")
 
     def _settings_path(self) -> Path:
@@ -2686,6 +2719,11 @@ class FinanceApp:
     # ------------------------------ dialogs ------------------------------
     def _open_issue_dialog(self) -> None:
         self._refresh_issue_state()
+        if self._issue_check_failed:
+            messagebox.showerror(
+                "数据异常", "阻断性异常检查失败，请查看日志后重试。", parent=self.root
+            )
+            return
         if not self._issues:
             messagebox.showinfo("数据异常", "当前没有阻断性数据异常。", parent=self.root)
             return

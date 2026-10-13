@@ -59,17 +59,14 @@ def _now() -> str:
 
 def _to_cents(value) -> int | None:
     """把票面金额字符串转成整数分；无法解析返回 None。"""
-    if value is None:
-        return None
-    text = str(value).replace(",", "").replace("¥", "").replace("￥", "").strip()
-    if not text:
-        return None
-    try:
-        from decimal import Decimal, ROUND_HALF_UP
+def _to_cents(value) -> int | None:
+    """把票面金额字符串转成整数分；无法解析返回 None。
 
-        return int((Decimal(text) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    except Exception:
-        return None
+    实现已收敛到 :mod:`modules.money`（2026-10-14）。
+    """
+    from modules import money
+
+    return money.parse_cents_or_none(value)
 
 
 def _cents_to_real(cents: int) -> float:

@@ -132,16 +132,14 @@ def _collect_items(root: ET.Element) -> list[dict[str, str]]:
 
 
 def _to_cents(value: str) -> int:
-    """``"2.12"`` / ``"0.120000"`` → ``212`` / ``12``；无法解析返回 0。"""
-    if not value:
-        return 0
-    cleaned = re.sub(r"[^0-9.\-]", "", str(value).replace(",", ""))
-    if not cleaned:
-        return 0
-    try:
-        return int((Decimal(cleaned) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    except InvalidOperation:
-        return 0
+    """``"2.12"`` / ``"0.120000"`` → ``212`` / ``12``；无法解析返回 0。
+
+    实现已收敛到 :mod:`modules.money`（2026-10-14）。原先这里自带一份
+    正则擦除 + Decimal 的实现，与项目里另外 8 份判据不一致。
+    """
+    from modules import money
+
+    return money.parse_cents_or_zero(value)
 
 
 def _fmt_money(value: str) -> str:

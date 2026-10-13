@@ -130,6 +130,11 @@ class _SettingsPageHost:
     """
 
     _issues: list = []
+    # _page_settings 读这两个字段（报表阻断态）；桩宿主必须给全，
+    # 否则新增任何状态字段都会让这个 GUI 冒烟炸掉。
+    # 注意：真 FinanceApp 上 _reports_blocked 是 @property，桩上用普通类属性即可。
+    _issue_check_failed = False
+    _reports_blocked = False
     _backup_error = ""
     _period_values = staticmethod(lambda: ["2026-09"])
 
