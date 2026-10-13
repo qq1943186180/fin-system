@@ -49,7 +49,20 @@ def _now() -> str:
     return _dt.datetime.now().isoformat(timespec="seconds")
 
 
+# 🔴 日期/期间校验的**唯一实现**（2026-10-14 收敛）。
+# 原先项目里有 4 份 _validate_period（gui/main 用正则、closing/ledger/reports 用
+# strptime + 回环）和 2 份 _validate_date，接受域实测不一致：
+#   * "0000-01" —— GUI 正则版放行、strptime 版拒绝（第 0 年不是合法日期）；
+#   * None 入参 —— GUI 正则版抛 AttributeError（None.strip()），其余抛 ValueError，
+#     而调用方普遍只捕 ValueError → 会漏。
+# 现在 gui/main、modules/closing、modules/reports 全部委托到这两个函数。
+# 改校验规则**只改这里**，并同步 tests/test_date_period_validation.py。
 def _validate_date(date_str: str) -> str:
+    """校验 ``YYYY-MM-DD``；要求**规范化**（不接受 ``20260701`` 之类的紧凑式）。
+
+    ``None``/空串统一抛 ``ValueError``（不是 AttributeError）——
+    调用方几乎都只捕 ``ValueError``。
+    """
     value = str(date_str or "").strip()
     try:
         parsed = _dt.date.fromisoformat(value)
@@ -61,6 +74,11 @@ def _validate_date(date_str: str) -> str:
 
 
 def _validate_period(period: str) -> str:
+    """校验会计期间 ``YYYY-MM``；要求**规范化**（不接受 ``2026-7``）。
+
+    用 strptime + 回环而非正则：能顺带拒掉 ``0000-01`` 这种"格式对但不是
+    合法日期"的输入，且对 ``None`` 抛 ValueError 而非 AttributeError。
+    """
     value = str(period or "").strip()
     try:
         parsed = _dt.datetime.strptime(value, "%Y-%m")

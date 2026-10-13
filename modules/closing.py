@@ -24,14 +24,8 @@ CARRYOVER_SOURCE = "closing"
 
 
 def _validate_period(period: str) -> str:
-    value = str(period or "").strip()
-    try:
-        parsed = _dt.datetime.strptime(value, "%Y-%m")
-    except (TypeError, ValueError):
-        raise ValueError("会计期间必须是有效的 YYYY-MM") from None
-    if value != parsed.strftime("%Y-%m"):
-        raise ValueError("会计期间必须是有效的 YYYY-MM")
-    return value
+    """会计期间校验。委托到 :func:`modules.ledger._validate_period`（唯一实现）。"""
+    return ledger._validate_period(period)
 
 
 def _last_day_of_period(period: str) -> str:

@@ -130,17 +130,25 @@ def _current_period() -> str:
 
 
 def _validate_date(value: str) -> str:
-    try:
-        return dt.date.fromisoformat(value.strip()).isoformat()
-    except (TypeError, ValueError) as exc:
-        raise ValueError("日期必须是有效的 YYYY-MM-DD") from exc
+    """日期校验。实现已收敛到 :func:`modules.ledger._validate_date`（2026-10-14）。
+
+    ⚠️ 原先 GUI 自带一份**不做规范化回环**的版本，与 ledger 那份接受域不同：
+    ``20260701`` 会被 GUI 版静默归一成 ``2026-07-01``，而 ledger 版**拒绝**。
+    现在统一取更严格的一版（输入什么就还什么，不猜）。
+    """
+    return ledger._validate_date(value)
 
 
 def _validate_period(value: str) -> str:
-    value = value.strip()
-    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", value):
-        raise ValueError("期间必须是 YYYY-MM，例如 2026-07")
-    return value
+    """会计期间校验。实现已收敛到 :func:`modules.ledger._validate_period`。
+
+    ⚠️ 原先 GUI 用正则 ``\\d{4}-(0[1-9]|1[0-2])``，与其余三处（closing/ledger/
+    reports 用 strptime + 回环）**接受域不同**：
+    * ``0000-01`` —— GUI 放行、后端拒绝（第 0 年不是合法日期）；
+    * ``None`` 入参 —— GUI 抛 **AttributeError**（``None.strip()``），
+      而其余抛 ValueError；调用方普遍只捕 ValueError，会漏。
+    """
+    return ledger._validate_period(value)
 
 
 def _parse_cents(value: object, *, positive: bool = False) -> int:
@@ -1557,6 +1565,109 @@ class FinanceApp:
                 messagebox.showinfo("飞书拉取", text, parent=self.root)
             refresh()
 
+        def account_expense_row():
+            """把已审核的报销单生成凭证（approved → accounted）。
+
+            ⚠️ 这是本项目长期缺失的一环：``expense.account_expense()`` 写好了、
+            也有测试，但 GUI 里**没有任何入口**，导致「飞书审批通过」之后
+            状态机卡在 approved，永远走不到 accounted / paid。
+            """
+            row = current()
+            if not row:
+                messagebox.showwarning("请选择报销单", "请先选择一张报销单。", parent=self.root)
+                return
+            status = str(row.get("status") or "")
+            if row.get("voucher_id"):
+                messagebox.showinfo("已有凭证", "该报销单已生成凭证（凭证ID %s）。" % row["voucher_id"], parent=self.root)
+                return
+            if status != "approved":
+                messagebox.showwarning(
+                    "状态不符",
+                    "只有「已审核」状态的报销单才能生成凭证，当前状态：%s。\n\n"
+                    "完整流程：\n"
+                    "  1. 待审批 → 本地审核 → 已审核\n"
+                    "  2. 已审核 → 生成凭证（本按钮）→ 凭证待审核\n"
+                    "  3. 去「账务」页把凭证审核 + 过账 → 已记账\n"
+                    "  4. 已记账 → 登记付款（本按钮）→ 已付款" % _status(status),
+                    parent=self.root,
+                )
+                return
+            if not messagebox.askyesno(
+                "生成凭证",
+                "将为报销单 %s 生成记账凭证：\n"
+                "  借 各明细费用科目\n"
+                "  贷 2241 其他应付款-员工\n\n"
+                "凭证生成后为「待审核」，需再去「账务」页审核并过账，"
+                "报销单才会变为「已记账」。继续？" % (row.get("no") or row["id"]),
+                parent=self.root,
+            ):
+                return
+            try:
+                result = _call_supported(
+                    expense_mod.account_expense,
+                    eid=row["id"],
+                    expense_id=row["id"],
+                    actor=self.default_actor,
+                )
+                ok, message, _data = _result(result)
+                if not ok:
+                    raise ValueError(message)
+            except Exception as exc:
+                messagebox.showerror("生成凭证失败", str(exc), parent=self.root)
+                return
+            messagebox.showinfo("凭证已生成", message, parent=self.root)
+            refresh()
+
+        def pay_expense_row():
+            """登记报销付款（accounted → paid）。"""
+            row = current()
+            if not row:
+                messagebox.showwarning("请选择报销单", "请先选择一张报销单。", parent=self.root)
+                return
+            status = str(row.get("status") or "")
+            if status == "paid":
+                messagebox.showinfo("已付款", "该报销单已登记付款。", parent=self.root)
+                return
+            if status != "accounted":
+                messagebox.showwarning(
+                    "状态不符",
+                    "只有「已记账」状态的报销单才能登记付款，当前状态：%s。\n\n"
+                    "完整流程：\n"
+                    "  1. 待审批 → 本地审核 → 已审核\n"
+                    "  2. 已审核 → 生成凭证 → 凭证待审核\n"
+                    "  3. 去「账务」页把凭证审核 + 过账 → 已记账\n"
+                    "  4. 已记账 → 登记付款（本按钮）→ 已付款" % _status(status),
+                    parent=self.root,
+                )
+                return
+            accounts = [
+                a for a in self._accounts(category="资产", direction="借")
+                if str(a.get("code", "")).startswith("10")
+            ]
+            dialog = ExpensePayDialog(
+                self.root, self.default_actor, accounts,
+                "¥%s" % _money(_row_cents(row, "amount_cents", "amount")),
+            )
+            if not dialog.result:
+                return
+            try:
+                result = _call_supported(
+                    expense_mod.pay_expense,
+                    eid=row["id"],
+                    expense_id=row["id"],
+                    date_str=dialog.result["date"],
+                    account_code=dialog.result["account_code"],
+                    actor=dialog.result["actor"],
+                )
+                ok, message, _data = _result(result)
+                if not ok:
+                    raise ValueError(message)
+            except Exception as exc:
+                messagebox.showerror("登记付款失败", str(exc), parent=self.root)
+                return
+            messagebox.showinfo("付款已登记", message, parent=self.root)
+            refresh()
+
         actions = tk.Frame(parent, bg=C_PANEL, padx=12, pady=9)
         actions.pack(fill="x")
         tk.Label(
@@ -1580,6 +1691,8 @@ class FinanceApp:
             pady=6,
             command=pull_feishu,
         ).pack(side="right", padx=4)
+        ttk.Button(actions, text="登记付款", command=pay_expense_row).pack(side="right", padx=4)
+        ttk.Button(actions, text="生成凭证", command=account_expense_row).pack(side="right", padx=4)
         ttk.Button(actions, text="本地审核", command=approve).pack(side="right", padx=4)
         refresh()
 
@@ -2816,6 +2929,66 @@ class LineDialog:
         ttk.Button(window, text="确定", command=accept).grid(row=len(fields), column=1, padx=10, pady=12, sticky="e")
         window.bind("<Return>", lambda _e: accept())
         window.bind("<Escape>", lambda _e: window.destroy())
+        window.wait_window()
+
+
+class ExpensePayDialog:
+    """登记报销付款：选付款日期 + 资金科目 + 操作人。
+
+    为什么单独做而不用 ``WorkflowDialog``：后者只为「冲销」渲染日期输入框，
+    且没有科目选择。付款需要"从哪个资金科目付出"（1001 库存现金 / 1002 银行
+    存款 / 1012 其他货币资金），这是记账的必要信息，不能默认猜一个。
+    """
+
+    def __init__(self, parent, default_actor: str, accounts: list[dict], amount_text: str):
+        self.result = None
+        window = tk.Toplevel(parent)
+        window.configure(bg=C_BG)
+        window.title("登记报销付款")
+        window.transient(parent)
+        window.grab_set()
+        window.resizable(False, False)
+
+        actor_var = tk.StringVar(value=default_actor)
+        date_var = tk.StringVar(value=_today())
+        labels = ["%s %s" % (a["code"], a["name"]) for a in accounts] or ["1002 银行存款"]
+        codes = [a["code"] for a in accounts] or ["1002"]
+        account_var = tk.StringVar(value=labels[0])
+
+        tk.Label(window, text="付款金额", font=FONT).grid(row=0, column=0, padx=10, pady=7, sticky="e")
+        tk.Label(window, text=amount_text, font=FONT_B, fg=C_TEXT).grid(row=0, column=1, padx=10, pady=7, sticky="w")
+        tk.Label(window, text="付款日期", font=FONT).grid(row=1, column=0, padx=10, pady=7, sticky="e")
+        ttk.Entry(window, textvariable=date_var, width=30).grid(row=1, column=1, padx=10, pady=7)
+        tk.Label(window, text="资金科目", font=FONT).grid(row=2, column=0, padx=10, pady=7, sticky="e")
+        ttk.Combobox(window, textvariable=account_var, values=labels, width=28, state="readonly").grid(row=2, column=1, padx=10, pady=7)
+        tk.Label(window, text="操作人", font=FONT).grid(row=3, column=0, padx=10, pady=7, sticky="e")
+        ttk.Entry(window, textvariable=actor_var, width=30).grid(row=3, column=1, padx=10, pady=7)
+        tk.Label(
+            window,
+            text="将生成付款凭据：借 2241 其他应付款-员工 / 贷 所选资金科目。凭证过账后报销单才变为「已付款」。",
+            font=FONT_SMALL, fg=C_TEXT_MUTED, wraplength=420, justify="left",
+        ).grid(row=4, column=0, columnspan=2, padx=12, pady=(0, 8), sticky="w")
+
+        def accept():
+            try:
+                if not actor_var.get().strip():
+                    raise ValueError("操作人不能为空")
+                date_value = _validate_date(date_var.get())
+            except ValueError as exc:
+                messagebox.showerror("信息不完整", str(exc), parent=window)
+                return
+            chosen = account_var.get().split(" ", 1)[0]
+            if chosen not in codes:
+                chosen = codes[0]
+            self.result = {
+                "actor": actor_var.get().strip(),
+                "date": date_value,
+                "account_code": chosen,
+            }
+            window.destroy()
+
+        ttk.Button(window, text="取消", command=window.destroy).grid(row=5, column=0, padx=10, pady=12, sticky="e")
+        ttk.Button(window, text="确认付款", command=accept).grid(row=5, column=1, padx=10, pady=12, sticky="e")
         window.wait_window()
 
 

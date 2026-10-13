@@ -6,12 +6,19 @@ still support direct execution.  New code should prefer ``modules.<name>``.
 
 __all__ = [
     "arap",
+    "closing",
+    "einvoice",
     "expense",
+    "export_service",
     "feishu",
     "feishu_pull",
-    "invoice_gui",
     "integration",
+    "inventory",
+    "invoice_gui",
     "ledger",
-    "ocr_invoice",
+    "mail_processor",
+    "mail_service",
+    "mail_sync",
+    "money",
     "reports",
 ]
