@@ -139,7 +139,7 @@ python .\run_finance.py
       "name": "高迥贸易-主邮箱",
       "imap_host": "imap.qq.com",
       "imap_port": 993,
-      "username": "a13757178707@agent.qq.com",
+      "username": "your-mailbox@example.com",
       "password_encrypted": true,
       "use_ssl": true,
       "enabled": true,

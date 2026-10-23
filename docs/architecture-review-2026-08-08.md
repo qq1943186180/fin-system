@@ -272,7 +272,7 @@ graph TD
 | a | **构造函数参数不匹配** | `gui/page_mail.py:187` 传 2 个位置参数 `MailSyncEngine(self._config_provider, self._update_box)`；`modules/mail_sync.py:23` 签名是 `(config_provider, poll_interval_minutes=30)` → `self._update_box * 60` → 实测 `TypeError: unsupported operand type(s) for *: 'method' and 'int'`。且该调用**在 try 块之外** | 点开「邮件收票」页直接 `TypeError` |
 | b | **附件被静默丢弃，但水位线照常前进** | `mail_sync.py:53-69` 后台 `_run_once()` 只 `LOG.info("获取 %d 个附件")` 就结束，**从不调用 `process_attachment`**；而 `mail_service.py:224-226` 无论有无附件都推进 `config.last_uid`，`_persist_last_uid` 还会把它存盘 | **后台轮询会把发票邮件的 UID 水位线推过去，附件扔掉。这些票之后再也不会被收取。**（`process_attachment` 在 `page_mail.py:14` 被 import 但**全项目无任何调用点**） |
 | c | **明文密码将写入磁盘** | `page_mail.py:385-386`：`set_secret(...)` 存 DPAPI 后又 `data["password"] = pwd  # 保留用于 _cfg 回退` → `MailBoxConfig.to_dict()`（`mail_service.py:117`）包含 `"password"` → `_save_configs()` 明文写入 `%LOCALAPPDATA%\FinanceSystem\config\settings.json` | **绕开了整条 DPAPI 链路。**目前 `settings.json` 的 `mail_boxes` 为空数组，**尚未真实泄漏**——但配置第一个邮箱的瞬间就会 |
-| d | **SMTP 发信必然抛异常** | `mail_service.py:263` 用**未净化**的 `config.username` 拼密钥名；`security.py:29` 的 `_NAME_RE` 不允许 `@`。实测 `get_secret("mail_box.password.junge@gaojiong.com")` → `ValueError`，且 `send_mail` 未捕获 | 任何真实邮箱地址发信直接抛 `ValueError`（收件侧 `fetch_attachments:172` 用的是净化后的名字，两边不一致） |
+| d | **SMTP 发信必然抛异常** | `mail_service.py:263` 用**未净化**的 `config.username` 拼密钥名；`security.py:29` 的 `_NAME_RE` 不允许 `@`。实测 `get_secret("mail_box.password.username@example.com")` → `ValueError`，且 `send_mail` 未捕获 | 任何真实邮箱地址发信直接抛 `ValueError`（收件侧 `fetch_attachments:172` 用的是净化后的名字，两边不一致） |
 
 | 项 | 内容 |
 |---|---|
